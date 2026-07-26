@@ -19,6 +19,9 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        // THÊM DÒNG NÀY ĐỂ TẢI JMOBI VÀ CÁC THƯ VIỆN ĐỌC FILE
+        maven { url = uri("https://jitpack.io") }
+        maven { url = uri("https://github.com/psiegman/mvn-repo/raw/master/releases") }
     }
 }
 
