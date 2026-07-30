@@ -8,7 +8,7 @@ sealed class ScanProgressState {
     /**
      * Trạng thái rảnh rỗi (Chưa hoặc không thực hiện quét).
      */
-    object Idle : ScanProgressState()
+    data object Idle : ScanProgressState()
 
     /**
      * Trạng thái đang tiến hành quét file.
