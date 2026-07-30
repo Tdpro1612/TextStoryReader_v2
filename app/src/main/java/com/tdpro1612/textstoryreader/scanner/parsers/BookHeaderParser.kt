@@ -1,7 +1,9 @@
 package com.tdpro1612.textstoryreader.scanner.parsers
 
 import com.tdpro1612.textstoryreader.database.BookStatus
-import java.io.File
+import android.content.Context
+import android.net.Uri
+
 
 data class ParsedMetadata(
     val title: String,
@@ -11,13 +13,8 @@ data class ParsedMetadata(
 )
 
 interface BookHeaderParser {
-    /**
-     * Trả về danh sách định dạng file mà Parser này hỗ trợ (Ví dụ: setOf("TXT"))
-     */
     val supportedExtensions: Set<String>
 
-    /**
-     * Hàm đọc Header trích xuất metadata
-     */
-    fun parseHeader(file: File): ParsedMetadata
+    // Đọc header bằng Context và Uri (Chuẩn SAF Android 14)
+    suspend fun parseHeader(context: Context, uri: Uri): ParsedMetadata
 }
