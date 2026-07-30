@@ -1,47 +1,23 @@
 package com.tdpro1612.textstoryreader
 
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.setContent
-import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.tooling.preview.Preview
-import com.tdpro1612.textstoryreader.ui.theme.TextStoryReaderTheme
+import com.tdpro1612.textstoryreader.ui.library.LibraryActivity
 
 class MainActivity : ComponentActivity() {
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
-        setContent {
-            TextStoryReaderTheme {
-                Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                    Greeting(
-                        name = "Android",
-                        modifier = Modifier.padding(innerPadding)
-                    )
-                }
-            }
+
+        // 1. Mở LibraryActivity ngay khi app khởi chạy
+        val intent = Intent(this, LibraryActivity::class.java).apply {
+            // Xóa MainActivity khỏi Back Stack để khi bấm nút Back ở Thư viện sẽ thoát App luôn
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
         }
-    }
-}
+        startActivity(intent)
 
-@Composable
-fun Greeting(name: String, modifier: Modifier = Modifier) {
-    Text(
-        text = "Hello $name!",
-        modifier = modifier
-    )
-}
-
-@Preview(showBackground = true)
-@Composable
-fun GreetingPreview() {
-    TextStoryReaderTheme {
-        Greeting("Android")
+        // 2. Đóng MainActivity ngay lập tức để giải phóng RAM
+        finish()
     }
 }
