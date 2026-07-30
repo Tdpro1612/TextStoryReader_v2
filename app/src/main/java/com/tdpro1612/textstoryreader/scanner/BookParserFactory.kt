@@ -3,7 +3,6 @@ package com.tdpro1612.textstoryreader.scanner
 import com.tdpro1612.textstoryreader.scanner.parsers.BookHeaderParser
 import com.tdpro1612.textstoryreader.scanner.parsers.EpubHeaderParser
 import com.tdpro1612.textstoryreader.scanner.parsers.TxtHeaderParser
-import java.io.File
 
 object BookParserFactory {
 
@@ -11,23 +10,22 @@ object BookParserFactory {
     private val parsers: List<BookHeaderParser> = listOf(
         TxtHeaderParser(),
         EpubHeaderParser()
-        // SAU NÀY BẠN CHỈ CẦN THÊM VÀO ĐÂY:
-        // PrcHeaderParser(),
-        // MobiHeaderParser()
     )
 
     /**
-     * Trả về tập hợp tất cả đuôi file được hỗ trợ (.txt, .epub...)
+     * Trả về tập hợp tất cả đuôi file được hỗ trợ (.TXT, .EPUB...)
      */
     fun getSupportedExtensions(): Set<String> {
         return parsers.flatMap { it.supportedExtensions }.map { it.uppercase() }.toSet()
     }
 
     /**
-     * Tìm Parser tương ứng dựa theo đuôi file
+     * Tìm Parser tương ứng dựa theo đuôi file (String) thay vì Java File
      */
-    fun getParser(file: File): BookHeaderParser? {
-        val ext = file.extension.uppercase()
-        return parsers.firstOrNull { it.supportedExtensions.contains(ext) }
+    fun getParser(extension: String): BookHeaderParser? {
+        val ext = extension.uppercase()
+        return parsers.firstOrNull { parser ->
+            parser.supportedExtensions.any { it.equals(ext, ignoreCase = true) }
+        }
     }
 }
