@@ -65,6 +65,7 @@ dependencies {
     implementation(libs.androidx.compose.ui.graphics)
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.compose.material3)
+    implementation(libs.androidx.compose.material.icons.extended)
 
     // --- Room Database (KSP) ---
     implementation(libs.androidx.room.runtime)
@@ -79,6 +80,7 @@ dependencies {
         exclude(group = "net.sf.kxml", module = "kxml2")
     }
     implementation(libs.jmobireader)
+    implementation(libs.androidx.documentfile)
 
     // --- Testing ---
     testImplementation(libs.junit)
@@ -88,4 +90,9 @@ dependencies {
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
+
+    // Paging 3
+    implementation(libs.androidx.paging.runtime.ktx)
+    implementation(libs.androidx.paging.compose)
+    implementation(libs.androidx.room.paging)
 }

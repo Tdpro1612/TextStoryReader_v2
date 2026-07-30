@@ -7,12 +7,16 @@ espressoCore = "3.7.0"
 lifecycleRuntimeKtx = "2.11.0"
 activityCompose = "1.13.0"
 kotlin = "2.4.10"
+documentfile = "1.0.1"
 
-# KSP đồng bộ theo Kotlin 2.4.10
+# --- Paging & Room Database ---
+paging = "3.3.0"
+roomVersion = "2.8.4"
+
+# --- KSP đồng bộ theo Kotlin ---
 ksp = "2.3.10"
 
 composeBom = "2026.06.01"
-roomVersion = "2.8.4"
 
 # --- Thư viện đọc sách (EPUB & PRC/MOBI) ---
 epublib = "3.1"
@@ -20,8 +24,15 @@ jmobireader = "1.22.2"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
+androidx-compose-material-icons-extended = { group = "androidx.compose.material", name = "material-icons-extended" }
+androidx-documentfile = { group = "androidx.documentfile", name = "documentfile", version.ref = "documentfile" }
+
+# --- Paging 3 ---
+androidx-paging-runtime-ktx = { group = "androidx.paging", name = "paging-runtime-ktx", version.ref = "paging" }
+androidx-paging-compose = { group = "androidx.paging", name = "paging-compose", version.ref = "paging" }
 
 # --- Room Database ---
+androidx-room-paging = { group = "androidx.room", name = "room-paging", version.ref = "roomVersion" }
 androidx-room-compiler = { module = "androidx.room:room-compiler", version.ref = "roomVersion" }
 androidx-room-ktx = { module = "androidx.room:room-ktx", version.ref = "roomVersion" }
 androidx-room-runtime = { module = "androidx.room:room-runtime", version.ref = "roomVersion" }
@@ -45,7 +56,7 @@ androidx-compose-material3 = { group = "androidx.compose.material3", name = "mat
 
 # --- Readers (EPUB & PRC) ---
 epublib-core = { group = "com.positiondev.epublib", name = "epublib-core", version.ref = "epublib" }
-jmobireader = { group = "org.jsoup", name = "jsoup", version.ref = "jmobireader" } # Hoặc thư viện parse HTML/text cho Mobi
+jmobireader = { group = "org.jsoup", name = "jsoup", version.ref = "jmobireader" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
