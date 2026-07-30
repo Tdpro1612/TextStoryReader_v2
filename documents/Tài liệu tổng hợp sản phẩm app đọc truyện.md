@@ -1,4 +1,4 @@
-## **TỔNG HỢP KIẾN TRÚC APP ĐỌC TRUYỆN OFFLINE (6 UI CHUẨN HÓA)**
+## **TỔNG HỢP KIẾN TRÚC APP ĐỌC TRUYỆN OFFLINE (8 UI CHUẨN HÓA)**
 
 ### **UI 1: Thư viện (Library)**
 
