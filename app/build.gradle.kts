@@ -98,4 +98,7 @@ dependencies {
 
     // gson
     implementation(libs.google.gson)
+
+    // common
+    implementation(libs.commons.compress)
 }

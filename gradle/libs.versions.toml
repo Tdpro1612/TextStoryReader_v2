@@ -22,12 +22,14 @@ composeBom = "2026.06.01"
 epublib = "3.1"
 jmobireader = "1.22.2"
 gson = "2.10.1"
+commons-compress = "1.26.2"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 androidx-compose-material-icons-extended = { group = "androidx.compose.material", name = "material-icons-extended" }
 androidx-documentfile = { group = "androidx.documentfile", name = "documentfile", version.ref = "documentfile" }
 google-gson = { group = "com.google.code.gson", name = "gson", version.ref = "gson" }
+commons-compress = { group = "org.apache.commons", name = "commons-compress", version.ref = "commons-compress" }
 
 # --- Paging 3 ---
 androidx-paging-runtime-ktx = { group = "androidx.paging", name = "paging-runtime-ktx", version.ref = "paging" }
