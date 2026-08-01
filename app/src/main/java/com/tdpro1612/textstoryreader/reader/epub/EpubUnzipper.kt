@@ -4,9 +4,7 @@ import android.content.Context
 import android.net.Uri
 import java.io.File
 import java.io.FileOutputStream
-import java.io.InputStream
-import java.util.zip.ZipEntry
-import java.util.zip.ZipInputStream
+import org.apache.commons.compress.archivers.zip.ZipFile
 
 /**
  * Lớp chịu trách nhiệm giải nén tệp EPUB vào bộ nhớ Cache ứng dụng (Chuẩn Android 14+).
@@ -23,51 +21,59 @@ object EpubUnzipper {
      * @return Thư mục [File] chứa toàn bộ nội dung đã xả nén
      */
     fun unzipEpubToCache(context: Context, uri: Uri): File {
-        // Tạo tên thư mục duy nhất dựa trên Uri của sách
         val folderName = "epub_cache_" + uri.toString().hashCode()
         val targetDir = File(context.cacheDir, folderName)
 
-        // Nếu đã tồn tại cache cũ của cuốn này -> Xóa đi để giải nén mới cho sạch
-        if (targetDir.exists()) {
-            targetDir.deleteRecursively()
-        }
+        if (targetDir.exists()) targetDir.deleteRecursively()
         targetDir.mkdirs()
 
-        val inputStream: InputStream = context.contentResolver.openInputStream(uri)
-            ?: throw IllegalArgumentException("Không thể mở InputStream từ Uri: $uri")
+        // Bước 1: Copy nội dung Uri ra 1 file tạm trong cache (để có random access)
+        val tempZipFile = File(context.cacheDir, "temp_${folderName}.epub")
+        context.contentResolver.openInputStream(uri)?.use { input ->
+            FileOutputStream(tempZipFile).use { output ->
+                input.copyTo(output)
+            }
+        } ?: throw IllegalArgumentException("Không thể mở InputStream từ Uri: $uri")
 
-        ZipInputStream(inputStream.buffered()).use { zip ->
-            var entry: ZipEntry? = zip.nextEntry
-            val buffer = ByteArray(BUFFER_SIZE)
+        try {
+            // Bước 2: Dùng ZipFile (random access) thay vì ZipArchiveInputStream
+            ZipFile.builder().setFile(tempZipFile).get().use { zipFile ->
+                val entries = zipFile.entries.toList()
+//                android.util.Log.d("EpubUnzip", "📦 Tổng số entry trong zip: ${entries.size}")
 
-            while (entry != null) {
-                // Lọc bỏ thư mục ẩn hoặc tệp hệ thống không cần thiết (__MACOSX, .DS_Store...)
-                if (!entry.isDirectory && !entry.name.startsWith("__MACOSX")) {
-                    val destFile = File(targetDir, entry.name)
+                for (entry in entries) {
+                    val currentEntryName = entry.name
+                    try {
+                        if (!entry.isDirectory && !currentEntryName.startsWith("__MACOSX")) {
+                            val destFile = File(targetDir, currentEntryName)
+                            val canonicalDestPath = destFile.canonicalPath
+                            val canonicalTargetDirPath = targetDir.canonicalPath
+                            if (!canonicalDestPath.startsWith(canonicalTargetDirPath + File.separator)) {
+                                throw SecurityException("Phát hiện file Zip Slip nguy hiểm: $currentEntryName")
+                            }
+                            destFile.parentFile?.mkdirs()
 
-                    // 🔒 KIỂM TRA BẢO MẬT ZIP SLIP (Bắt buộc cho Android 14+)
-                    val canonicalDestPath = destFile.canonicalPath
-                    val canonicalTargetDirPath = targetDir.canonicalPath
-                    if (!canonicalDestPath.startsWith(canonicalTargetDirPath + File.separator)) {
-                        throw SecurityException("Phát hiện file Zip Slip nguy hiểm: ${entry.name}")
-                    }
-
-                    // Tạo sẵn thư mục cha nếu file nằm trong subfolder (ví dụ: OEBPS/Text/chap1.html)
-                    destFile.parentFile?.mkdirs()
-
-                    // Ghi file ra ổ đĩa Cache
-                    FileOutputStream(destFile).buffered().use { out ->
-                        var bytesRead: Int
-                        while (zip.read(buffer).also { bytesRead = it } != -1) {
-                            out.write(buffer, 0, bytesRead)
+                            zipFile.getInputStream(entry).use { input ->
+                                FileOutputStream(destFile).buffered().use { output ->
+                                    input.copyTo(output)
+                                }
+                            }
                         }
+                    } catch (e: Exception) {
+//                        android.util.Log.e("EpubUnzip", "💥 LỖI entry '$currentEntryName': ${e.javaClass.simpleName} - ${e.message}")
+                        e.printStackTrace()
                     }
                 }
-                zip.closeEntry()
-                entry = zip.nextEntry
             }
+        } catch (e: Exception) {
+//            android.util.Log.e("EpubUnzip", "💥💥 LỖI KHI MỞ ZIP: ${e.javaClass.simpleName} - ${e.message}")
+            e.printStackTrace()
+        } finally {
+            // Bước 3: Dọn file tạm
+            tempZipFile.delete()
         }
 
+//        android.util.Log.d("EpubUnzip", "✅ HOÀN TẤT giải nén, số file trong targetDir: ${targetDir.walk().count { it.isFile }}")
         return targetDir
     }
 
