@@ -138,7 +138,42 @@ class EpubFileReader(
                     chapter.copy(index = index)
                 }
         }
+        Log.d(TAG, "🔢 Sau parse + lọc junk: ${chapters.size} chương")
 
+        // 1. Tìm vị trí index đầu tiên thỏa mãn điều kiện bắt đầu (quét cực nhanh từ trên xuống)
+        val startIndex = chapters.indexOfFirst { chapter ->
+            val titleLower = chapter.title.lowercase().trim()
+            titleLower.contains("chương 1:") ||
+                    titleLower.contains("chương 1.") ||
+                    titleLower.contains("chapter 1:") ||
+                    titleLower.contains("chương 01:") ||
+                    titleLower.contains("chương 001:") ||
+                    titleLower == "chương 1" ||
+                    titleLower == "1" ||
+                    titleLower.contains("mở đầu") ||
+                    titleLower.contains("giới thiệu")
+//                    titleLower.contains("vol 1") ||
+//                    titleLower.contains("quyển 1")
+        }
+        Log.d(TAG, "🎯 startIndex tìm thấy = $startIndex" + if (startIndex != -1) " (title: \"${chapters[startIndex].title}\")" else "")
+        // 2. Nếu tìm thấy (index >= 0), cắt danh sách từ đó về sau.
+        // Nếu không tìm thấy, giữ nguyên danh sách cũ.
+        chapters = if (startIndex != -1) {
+            chapters.subList(startIndex, chapters.size).toMutableList()
+        } else {
+            chapters
+        }
+        Log.d(TAG, "🔢 Sau cắt startIndex: ${chapters.size} chương")
+        // 3. 🧹 KHẮC PHỤC TRÙNG LẶP: Lọc bỏ các tiêu đề trùng nhau nằm sát cạnh nhau (hiện tượng file gộp dính 2 chương 1)
+        if (chapters.size >= 2) {
+            val firstTitle = chapters[0].title.lowercase().trim()
+            val secondTitle = chapters[1].title.lowercase().trim()
+
+            if (firstTitle == secondTitle) {
+                chapters = chapters.drop(1).toMutableList() // bỏ chương đầu tiên (index 0), giữ chương thứ 2
+            }
+        }
+        Log.d(TAG, "🔢 Sau lọc trùng lặp: ${chapters.size} chương")
         val cacheWriteTime = measureTimeMillis {
             if (chapters.isNotEmpty()) {
                 try {
@@ -148,39 +183,6 @@ class EpubFileReader(
                 }
             }
         }
-        // 1. Tìm vị trí index đầu tiên thỏa mãn điều kiện bắt đầu (quét cực nhanh từ trên xuống)
-        val startIndex = chapters.indexOfFirst { chapter ->
-            val titleLower = chapter.title.lowercase().trim()
-            titleLower.contains("chương 1") ||
-                    titleLower.contains("chapter 1") ||
-                    titleLower.contains("chương 01") ||
-                    titleLower.contains("chương 001") ||
-                    titleLower.startsWith("1") ||
-                    titleLower.startsWith("0") ||
-                    titleLower.contains("mở đầu") ||
-                    titleLower.contains("giới thiệu") ||
-                    titleLower.contains("vol 1") ||
-                    titleLower.contains("quyển 1")
-        }
-
-        // 2. Nếu tìm thấy (index >= 0), cắt danh sách từ đó về sau.
-        // Nếu không tìm thấy, giữ nguyên danh sách cũ.
-        chapters = if (startIndex != -1) {
-            chapters.subList(startIndex, chapters.size).toMutableList()
-        } else {
-            chapters
-        }
-        // 3. 🧹 KHẮC PHỤC TRÙNG LẶP: Lọc bỏ các tiêu đề trùng nhau nằm sát cạnh nhau (hiện tượng file gộp dính 2 chương 1)
-        chapters = chapters.filterIndexed { index, chapter ->
-            if (index == 0) true
-            else {
-                val prevTitle = chapters[index - 1].title.lowercase().trim()
-                val currTitle = chapter.title.lowercase().trim()
-                // Nếu tiêu đề hiện tại khác hoàn toàn tiêu đề trước đó thì giữ lại, giống nhau thì vứt bỏ 1 cái
-                currTitle != prevTitle
-            }
-        }.toMutableList()
-
         val totalTime = System.currentTimeMillis() - totalStart
         Log.i(TAG, "--------------------------------------------------")
         Log.i(TAG, "📊 [PERFORMANCE SUMMARY] Sách: $bookId")
@@ -559,18 +561,33 @@ class EpubFileReader(
     private fun parseTocList(): List<Pair<String, String>> {
         val titleList = mutableListOf<Pair<String, String>>()
         try {
-            val ncxFile = cacheFolder.walk().firstOrNull { it.name.lowercase().endsWith("toc.ncx") }
-            if (ncxFile != null) {
-                val doc = Jsoup.parse(ncxFile.readText(Charsets.UTF_8), "", Parser.xmlParser())
-                doc.select("navPoint").forEach { navPoint ->
-                    val title = navPoint.select("> navLabel > text").text().trim()
-                    val src = navPoint.select("> content").attr("src").trim()
+            val ncxFile = cacheFolder.walk().firstOrNull { it.extension.lowercase() == "ncx" }
+
+            if (ncxFile != null && ncxFile.exists()) {
+                val contentText = ncxFile.readText(Charsets.UTF_8)
+                val doc = Jsoup.parse(contentText, "", Parser.xmlParser())
+                val navPoints = doc.select("navPoint")
+
+                navPoints.forEach { navPoint ->
+                    val title = navPoint.select("navLabel > text").first()?.text()?.trim()
+                        ?: navPoint.select("text").first()?.text()?.trim()
+                        ?: ""
+
+                    val src = navPoint.select("> content").first()?.attr("src")?.trim()
+                        ?: navPoint.select("content").first()?.attr("src")?.trim()
+                        ?: ""
+
                     if (src.isNotBlank() && title.isNotBlank()) {
                         titleList.add(Pair(src, title))
                     }
                 }
+
+                android.util.Log.d("EpubParser", "✅ Parse TOC xong: ${titleList.size} title")
+            } else {
+                android.util.Log.e("EpubParser", "❌ KHÔNG TÌM THẤY FILE .NCX TRONG CACHE FOLDER!")
             }
         } catch (e: Exception) {
+            android.util.Log.e("EpubParser", "❌ LỖI PARSE TOC NCX: ${e.message}")
             e.printStackTrace()
         }
         return titleList
