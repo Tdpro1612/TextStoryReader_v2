@@ -4,11 +4,11 @@ import android.net.Uri
 
 object ReaderFactory {
 
-    private val txtReader by lazy { TxtContentReader() }
+//    private val txtReader by lazy { TxtContentReader() }
 
     private val epubReader by lazy { EpubContentReader() }
 
-    private val prcReader by lazy { PrcContentReader() }
+//    private val prcReader by lazy { PrcContentReader() }
 
     fun getReader(uri: Uri): BookContentReader {
 
@@ -17,15 +17,15 @@ object ReaderFactory {
             .lowercase()
 
         return when {
-            fileName.endsWith(".txt") ->
-                txtReader
+//            fileName.endsWith(".txt") ->
+//                txtReader
 
             fileName.endsWith(".epub") ->
                 epubReader
 
-            fileName.endsWith(".prc") ||
-            fileName.endsWith(".mobi") ->
-                prcReader
+//            fileName.endsWith(".prc") ||
+//            fileName.endsWith(".mobi") ->
+//                prcReader
 
             else ->
                 throw UnsupportedOperationException(
