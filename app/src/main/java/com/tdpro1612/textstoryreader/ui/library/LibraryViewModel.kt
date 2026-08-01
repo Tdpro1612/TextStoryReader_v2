@@ -31,6 +31,14 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
     private val _totalBooksCount = MutableStateFlow(0)
     val totalBooksCount: StateFlow<Int> = _totalBooksCount.asStateFlow()
 
+    // 🔥 MỚI: Flow cung cấp danh sách 20 cuốn lịch sử đọc gần nhất
+    val recentHistoryBooks: StateFlow<List<BookEntity>> = bookManager.getRecentHistory(20)
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyList()
+        )
+
     // Tính tổng số trang dựa trên tổng số sách
     val totalPages: StateFlow<Int> = _totalBooksCount.map { count ->
         if (count == 0) 1 else kotlin.math.ceil(count.toDouble() / pageSize).toInt()

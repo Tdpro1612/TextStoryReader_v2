@@ -16,9 +16,8 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBackIosNew
 import androidx.compose.material.icons.filled.ArrowForwardIos
-//import androidx.compose.material.icons.automirrored.filled.ChevronLeft
-//import androidx.compose.material.icons.automirrored.filled.ChevronRight
 import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
@@ -80,19 +79,24 @@ fun LibraryScreen(
     val totalPages by viewModel.totalPages.collectAsState()
     val totalBooksCount by viewModel.totalBooksCount.collectAsState()
 
+    // 🔥 Lịch sử đọc từ ViewModel
+    val recentHistoryBooks by viewModel.recentHistoryBooks.collectAsState()
+
+    // 🔥 Trạng thái đóng/mở BottomSheet Lịch sử
+    var showHistorySheet by remember { mutableStateOf(false) }
+    val sheetState = rememberModalBottomSheetState()
+
     var lastSelectedUri by remember { mutableStateOf<String?>(null) }
     var showClearConfirmDialog by remember { mutableStateOf(false) }
 
     val listState = rememberLazyListState()
 
-    // Tự động cuộn mượt lên đầu danh sách mỗi khi chuyển trang
     LaunchedEffect(currentPage) {
         if (bookList.isNotEmpty()) {
             listState.animateScrollToItem(0)
         }
     }
 
-    // SAF Picker cấp quyền đọc thư mục
     val folderPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocumentTree()
     ) { uri ->
@@ -100,10 +104,7 @@ fun LibraryScreen(
             try {
                 val takeFlags: Int = Intent.FLAG_GRANT_READ_URI_PERMISSION
                 context.contentResolver.takePersistableUriPermission(it, takeFlags)
-
                 lastSelectedUri = it.toString()
-
-                // Mặc định: Quét tiếp / Quét bổ sung (clearOldData = false)
                 viewModel.scanFolder(it.toString(), clearOldData = false)
             } catch (e: Exception) {
                 Toast.makeText(context, "Không thể cấp quyền đọc thư mục!", Toast.LENGTH_SHORT).show()
@@ -111,7 +112,6 @@ fun LibraryScreen(
         }
     }
 
-    // Thông báo trạng thái quét
     LaunchedEffect(scanState) {
         when (val state = scanState) {
             is ScanProgressState.Error -> {
@@ -128,7 +128,6 @@ fun LibraryScreen(
         }
     }
 
-    // Dialog xác nhận nếu người dùng chọn quét lại hoàn toàn
     if (showClearConfirmDialog) {
         AlertDialog(
             onDismissRequest = { showClearConfirmDialog = false },
@@ -154,16 +153,73 @@ fun LibraryScreen(
         )
     }
 
+    // 🔥 Modal BottomSheet hiển thị lịch sử đọc
+    if (showHistorySheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showHistorySheet = false },
+            sheetState = sheetState
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .fillMaxHeight(0.75f)
+                    .padding(horizontal = 16.dp)
+            ) {
+                Text(
+                    text = "Lịch sử đọc gần đây",
+                    style = MaterialTheme.typography.titleLarge,
+                    modifier = Modifier.padding(bottom = 12.dp)
+                )
+
+                if (recentHistoryBooks.isEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "Chưa có lịch sử đọc nào.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                } else {
+                    LazyColumn(
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        items(
+                            items = recentHistoryBooks,
+                            key = { book -> book.id }
+                        ) { book ->
+                            BookItem(
+                                book = book,
+                                onClick = {
+                                    showHistorySheet = false
+                                    onBookClick(book)
+                                }
+                            )
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.height(24.dp))
+            }
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text("Thư Viện ($totalBooksCount truyện)") },
                 actions = {
-                    // Nút chọn thư mục (Quét tiếp/Bổ sung)
+                    // 🔥 Nút mở lịch sử đọc
+                    IconButton(onClick = { showHistorySheet = true }) {
+                        Icon(Icons.Default.History, contentDescription = "Lịch sử đọc")
+                    }
                     IconButton(onClick = { folderPickerLauncher.launch(null) }) {
                         Icon(Icons.Default.FolderOpen, contentDescription = "Chọn thư mục quét")
                     }
-                    // Nút làm mới (Xóa dữ liệu cũ & quét lại)
                     if (lastSelectedUri != null) {
                         IconButton(onClick = { showClearConfirmDialog = true }) {
                             Icon(Icons.Default.Refresh, contentDescription = "Xóa & Quét lại")
@@ -175,7 +231,6 @@ fun LibraryScreen(
                 }
             )
         },
-        // Thanh chuyển trang bằng nút bấm ở đáy
         bottomBar = {
             if (totalBooksCount > 0) {
                 Surface(
@@ -229,7 +284,6 @@ fun LibraryScreen(
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            // Thanh tiến trình quét Realtime
             if (scanState is ScanProgressState.Scanning) {
                 val state = scanState as ScanProgressState.Scanning
                 Column(modifier = Modifier.fillMaxWidth()) {
@@ -302,7 +356,7 @@ fun BookItem(
                     style = MaterialTheme.typography.titleMedium
                 )
                 Text(
-                    text = if (book.author.isNullOrEmpty()) "Tác giả không xác định" else book.author,
+                    text = android.text.format.Formatter.formatFileSize(LocalContext.current, book.fileSize),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
