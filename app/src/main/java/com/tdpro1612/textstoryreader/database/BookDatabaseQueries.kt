@@ -150,4 +150,19 @@ interface BookDatabaseQueries {
     // 🔥 MỚI: Xóa toàn bộ bookmark cũ khi dọn dẹp database
     @Query("DELETE FROM bookmarks")
     suspend fun deleteAllBookmarks()
+
+
+    // =========================================================================
+    // NHÓM QUẢN LÝ CHƯƠNG (BOOK CHAPTERS)
+    // =========================================================================
+
+    @Query("SELECT * FROM book_chapters WHERE bookId = :bookId ORDER BY chapterIndex ASC")
+    suspend fun getChaptersByBookId(bookId: Int): List<ChapterEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertChapters(chapters: List<ChapterEntity>)
+
+    @Query("DELETE FROM book_chapters WHERE bookId = :bookId")
+    suspend fun deleteChaptersByBookId(bookId: Int)
+
 }

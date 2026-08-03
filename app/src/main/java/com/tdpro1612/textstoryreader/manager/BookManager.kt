@@ -6,6 +6,7 @@ import android.util.Log
 import com.tdpro1612.textstoryreader.database.AppDatabase
 import com.tdpro1612.textstoryreader.database.BookEntity
 import com.tdpro1612.textstoryreader.database.BookmarkEntity
+import com.tdpro1612.textstoryreader.database.ChapterEntity
 import com.tdpro1612.textstoryreader.reader.BookChapter
 import com.tdpro1612.textstoryreader.reader.ReaderFactory
 import com.tdpro1612.textstoryreader.scanner.BookScanManager
@@ -87,10 +88,55 @@ class BookManager(private val context: Context) {
     }
 
     // --- 5. Quản lý Đọc nội dung chương (Reader Integration) ---
-    suspend fun getChapterList(bookUri: Uri): List<BookChapter> {
-        Log.d("EPUB", "bookUri = $bookUri")
+
+    /**
+     * Lấy danh sách chương của sách. Ưu tiên đọc từ Cache DB (Room).
+     * Nếu DB chưa có thì parse từ đĩa qua Reader và lưu vào DB.
+     */
+    suspend fun getChapterList(bookUri: Uri, bookId: Int): List<BookChapter> {
+        Log.d("BookManager", "getChapterList -> bookUri = $bookUri, bookId = $bookId")
+
+        // 1. Kiểm tra cache trong Room DB
+        val cachedChapters = bookQueries.getChaptersByBookId(bookId)
+        if (cachedChapters.isNotEmpty()) {
+            Log.d("BookManager", "⚡ [CACHE HIT] Lấy ${cachedChapters.size} chương từ Database cho bookId = $bookId")
+            return cachedChapters.map { entity ->
+                BookChapter(
+                    index = entity.chapterIndex,
+                    title = entity.title,
+                    path = entity.path,
+                    path_next = entity.pathNext ?: "",
+                    startCharOffset = entity.startCharOffset,
+                    endCharOffset = entity.endCharOffset
+                )
+            }
+        }
+
+        // 2. Nếu DB chưa có -> Parse qua Reader
+        Log.d("BookManager", "🐢 [CACHE MISS] Parse trực tiếp từ file qua Reader cho bookId = $bookId")
         val reader = ReaderFactory.getReader(bookUri)
-        return reader.getChapterList(context, bookUri)
+        val parsedChapters = reader.getChapterList(context, bookUri)
+
+        // 3. Lưu vào DB để cache cho các lần sau
+        if (parsedChapters.isNotEmpty()) {
+            val entities = parsedChapters.map { chapter ->
+                ChapterEntity(
+                    id = 0, // Primary Key autoGenerate
+                    bookId = bookId,
+                    chapterIndex = chapter.index,
+                    title = chapter.title,
+                    path = chapter.path,
+                    pathNext = chapter.path_next,
+                    startCharOffset = chapter.startCharOffset,
+                    endCharOffset = chapter.endCharOffset
+                )
+            }
+            bookQueries.deleteChaptersByBookId(bookId)
+            bookQueries.insertChapters(entities)
+            Log.d("BookManager", "💾 Đã lưu ${parsedChapters.size} chương vào Database cho bookId = $bookId")
+        }
+
+        return parsedChapters
     }
 
     suspend fun getChapterContent(bookUri: Uri, chapter: BookChapter): String {
