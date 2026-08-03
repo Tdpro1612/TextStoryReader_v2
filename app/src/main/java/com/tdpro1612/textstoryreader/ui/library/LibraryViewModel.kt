@@ -5,7 +5,9 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.tdpro1612.textstoryreader.database.BookEntity
 import com.tdpro1612.textstoryreader.manager.BookManager
+import com.tdpro1612.textstoryreader.reader.epub.EpubUnzipper
 import com.tdpro1612.textstoryreader.scanner.ScanProgressState
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -31,7 +33,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
     private val _totalBooksCount = MutableStateFlow(0)
     val totalBooksCount: StateFlow<Int> = _totalBooksCount.asStateFlow()
 
-    // 🔥 MỚI: Flow cung cấp danh sách 20 cuốn lịch sử đọc gần nhất
+    // 🔥 Flow cung cấp danh sách 20 cuốn lịch sử đọc gần nhất
     val recentHistoryBooks: StateFlow<List<BookEntity>> = bookManager.getRecentHistory(20)
         .stateIn(
             scope = viewModelScope,
@@ -45,6 +47,11 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
     }.stateIn(viewModelScope, SharingStarted.Eagerly, 1)
 
     init {
+        // 🧹 Dọn dẹp sạch sẽ tất cả cache EPUB tồn đọng từ các phiên chạy cũ khi mở Thư viện
+        viewModelScope.launch(Dispatchers.IO) {
+            EpubUnzipper.clearAllEpubCache(getApplication())
+        }
+
         // Tự động load lại trang khi thay đổi từ khóa tìm kiếm hoặc số trang
         viewModelScope.launch {
             combine(_searchQuery, _currentPage) { query, page ->
