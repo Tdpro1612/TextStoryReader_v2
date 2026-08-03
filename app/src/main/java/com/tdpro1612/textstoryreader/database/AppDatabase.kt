@@ -9,7 +9,8 @@ import androidx.room.TypeConverters
 @Database(
     entities = [
         BookEntity::class,
-        BookmarkEntity::class
+        BookmarkEntity::class,
+        ChapterEntity::class
     ],
     version = 1,
     exportSchema = false
