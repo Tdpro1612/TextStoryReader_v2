@@ -8,13 +8,14 @@ import com.tdpro1612.textstoryreader.database.AppDatabase
 import com.tdpro1612.textstoryreader.database.BookEntity
 import com.tdpro1612.textstoryreader.manager.BookManager
 import com.tdpro1612.textstoryreader.reader.BookChapter
-import com.tdpro1612.textstoryreader.reader.ReaderFactory
+import com.tdpro1612.textstoryreader.reader.epub.EpubUnzipper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 
 sealed class ReaderUiState {
     object Loading : ReaderUiState()
@@ -37,7 +38,12 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
     private var currentBook: BookEntity? = null
     private var chaptersList: List<BookChapter> = emptyList()
-    private var currentChapterIndex: Int = 0
+
+    var currentChapterIndex: Int = 0
+        private set
+    private var currentPosition: Int = 0
+
+    private var currentCacheFolder: File? = null
 
     fun loadBook(bookId: Int) {
         viewModelScope.launch {
@@ -53,7 +59,9 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 }
 
                 currentBook = book
+                // Gán đúng chương cũ và vị trí cũ từ DB
                 currentChapterIndex = book.lastChapterIndex
+                currentPosition = book.lastPosition
 
                 val bookUri = Uri.parse(book.filePath)
 
@@ -70,25 +78,29 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                     return@launch
                 }
 
-                val reader = ReaderFactory.getReader(bookUri)
-                chaptersList = reader.getChapterList(getApplication(), bookUri)
+                chaptersList = withContext(Dispatchers.IO) {
+                    bookManager.getChapterList(bookUri, book.id)
+                }
+
+                val folderName = "epub_cache_" + bookUri.toString().hashCode()
+                currentCacheFolder = File(getApplication<Application>().cacheDir, folderName)
 
                 if (chaptersList.isEmpty()) {
                     _uiState.value = ReaderUiState.Error("Tệp truyện rỗng hoặc không phân tích được chương nào!")
                     return@launch
                 }
 
+                // Kiểm tra bound index an toàn
                 if (currentChapterIndex !in chaptersList.indices) {
                     currentChapterIndex = 0
+                    currentPosition = 0
                 }
 
-                val content = reader.getChapterContent(getApplication(), bookUri, chaptersList[currentChapterIndex])
+                val content = withContext(Dispatchers.IO) {
+                    bookManager.getChapterContent(bookUri, chaptersList[currentChapterIndex])
+                }
 
-                saveProgress(
-                    chapterIndex = currentChapterIndex,
-                    position = book.lastPosition,
-                    progress = book.readProgress
-                )
+                // Đã bỏ dòng saveProgress(...) ở đây để tránh đè đúp DB khi vừa load sách
 
                 _uiState.value = ReaderUiState.Success(
                     book = book,
@@ -119,11 +131,10 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
                 val bookUri = Uri.parse(book.filePath)
                 currentChapterIndex = chapterIndex
+                currentPosition = 0 // Chuyển chương mới -> Reset vị trí cuộn về 0
 
-                // Đọc cực nhanh nhờ đã có Cache từ EpubContentReader
-                val reader = ReaderFactory.getReader(bookUri)
                 val content = withContext(Dispatchers.IO) {
-                    reader.getChapterContent(getApplication(), bookUri, chaptersList[chapterIndex])
+                    bookManager.getChapterContent(bookUri, chaptersList[currentChapterIndex])
                 }
 
                 val progress = ((chapterIndex + 1).toFloat() / chaptersList.size.toFloat()) * 100f
@@ -146,6 +157,45 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    fun forceReloadChapters() {
+        val book = currentBook ?: return
+        viewModelScope.launch {
+            _uiState.value = ReaderUiState.Loading
+            try {
+                val bookUri = Uri.parse(book.filePath)
+
+                withContext(Dispatchers.IO) {
+                    bookQueries.deleteChaptersByBookId(book.id)
+                }
+
+                chaptersList = withContext(Dispatchers.IO) {
+                    bookManager.getChapterList(bookUri, book.id)
+                }
+
+                if (chaptersList.isEmpty()) {
+                    _uiState.value = ReaderUiState.Error("Không tìm thấy chương nào sau khi làm mới!")
+                    return@launch
+                }
+
+                currentChapterIndex = 0
+                currentPosition = 0
+
+                val content = withContext(Dispatchers.IO) {
+                    bookManager.getChapterContent(bookUri, chaptersList[currentChapterIndex])
+                }
+
+                _uiState.value = ReaderUiState.Success(
+                    book = book,
+                    chapters = chaptersList,
+                    currentChapterIndex = currentChapterIndex,
+                    currentChapterContent = content
+                )
+            } catch (e: Exception) {
+                _uiState.value = ReaderUiState.Error("Lỗi khi làm mới mục lục: ${e.localizedMessage}")
+            }
+        }
+    }
+
     fun nextChapter() {
         if (currentChapterIndex < chaptersList.size - 1) {
             loadChapter(currentChapterIndex + 1)
@@ -160,13 +210,37 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
     fun saveProgress(chapterIndex: Int, position: Int, progress: Float) {
         val book = currentBook ?: return
-        viewModelScope.launch {
+        this.currentChapterIndex = chapterIndex
+        this.currentPosition = position
+
+        viewModelScope.launch(Dispatchers.IO) {
             bookManager.updateReadingProgress(
                 bookId = book.id,
                 chapterIndex = chapterIndex,
                 position = position,
                 progress = progress
             )
+        }
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        val book = currentBook
+        if (book != null && chaptersList.isNotEmpty()) {
+            viewModelScope.launch(Dispatchers.IO) {
+                bookManager.updateReadingProgress(
+                    bookId = book.id,
+                    chapterIndex = currentChapterIndex,
+                    position = currentPosition,
+                    progress = ((currentChapterIndex + 1).toFloat() / chaptersList.size.toFloat()) * 100f
+                )
+            }
+        }
+
+        currentCacheFolder?.let { folder ->
+            viewModelScope.launch(Dispatchers.IO) {
+                EpubUnzipper.clearCache(folder)
+            }
         }
     }
 }
