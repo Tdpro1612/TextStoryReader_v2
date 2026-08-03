@@ -356,7 +356,7 @@ fun BookItem(
                     style = MaterialTheme.typography.titleMedium
                 )
                 Text(
-                    text = android.text.format.Formatter.formatFileSize(LocalContext.current, book.fileSize),
+                    text = "${book.fileType.uppercase()} • ${android.text.format.Formatter.formatFileSize(LocalContext.current, book.fileSize)}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
