@@ -101,4 +101,7 @@ dependencies {
 
     // common
     implementation(libs.commons.compress)
+
+    // Data store
+    implementation(libs.androidx.datastore.preferences)
 }

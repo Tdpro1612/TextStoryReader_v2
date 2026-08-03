@@ -225,9 +225,9 @@ fun LibraryScreen(
                             Icon(Icons.Default.Refresh, contentDescription = "Xóa & Quét lại")
                         }
                     }
-                    IconButton(onClick = { /* Mở Settings */ }) {
-                        Icon(Icons.Default.Settings, contentDescription = "Cài đặt")
-                    }
+//                    IconButton(onClick = { /* Mở Settings */ }) {
+//                        Icon(Icons.Default.Settings, contentDescription = "Cài đặt")
+//                    }
                 }
             )
         },

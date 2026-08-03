@@ -1,12 +1,16 @@
 package com.tdpro1612.textstoryreader.ui.reader
 
+import android.app.Activity
 import android.os.Bundle
+import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -19,14 +23,19 @@ import androidx.compose.material.icons.filled.ArrowBackIosNew
 import androidx.compose.material.icons.filled.ArrowForwardIos
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.tdpro1612.textstoryreader.manager.SettingsManager
+import com.tdpro1612.textstoryreader.ui.settings.SettingsScreen
+import com.tdpro1612.textstoryreader.ui.settings.SettingsViewModel
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -49,10 +58,14 @@ class ReaderActivity : ComponentActivity() {
 
         viewModel.loadBook(bookId)
 
+        val settingsManager = SettingsManager(applicationContext)
+        val settingsViewModel = SettingsViewModel(settingsManager)
+
         setContent {
             MaterialTheme {
                 ReaderScreen(
                     viewModel = viewModel,
+                    settingsViewModel = settingsViewModel,
                     bookId = bookId,
                     onBackClick = { finish() }
                 )
@@ -65,15 +78,56 @@ class ReaderActivity : ComponentActivity() {
 @Composable
 fun ReaderScreen(
     viewModel: ReaderViewModel,
+    settingsViewModel: SettingsViewModel,
     bookId: Int,
     onBackClick: () -> Unit
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    val readerSettings by settingsViewModel.readerSettings.collectAsState()
+
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
 
-    BackHandler(enabled = drawerState.isOpen) {
-        scope.launch { drawerState.close() }
+    var showSettingsSheet by remember { mutableStateOf(false) }
+
+    // 🔥 Gọi hàm xử lý màu Theme trực tiếp từ SettingsViewModel
+    val (backgroundColor, textColor) = settingsViewModel.getThemeColors(readerSettings.themePreset)
+
+    // 🔥 Xử lý Luôn bật màn hình (keepScreenOn)
+    DisposableEffect(readerSettings.keepScreenOn) {
+        val activity = context as? Activity
+        if (readerSettings.keepScreenOn) {
+            activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        } else {
+            activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+        onDispose {
+            activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+    }
+
+    // 🔥 Tính toán fontSize & lineHeight từ ReaderSettings
+    val fontSizeSp = readerSettings.fontSizeSp.sp
+    val lineHeightSp = (readerSettings.fontSizeSp * readerSettings.lineHeightMultiplier).sp
+
+    BackHandler(enabled = drawerState.isOpen || showSettingsSheet) {
+        if (drawerState.isOpen) {
+            scope.launch { drawerState.close() }
+        } else if (showSettingsSheet) {
+            showSettingsSheet = false
+        }
+    }
+
+    if (showSettingsSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showSettingsSheet = false }
+        ) {
+            SettingsScreen(
+                viewModel = settingsViewModel,
+                onBackClick = { showSettingsSheet = false }
+            )
+        }
     }
 
     ModalNavigationDrawer(
@@ -90,11 +144,21 @@ fun ReaderScreen(
                         }
                     }
 
-                    Text(
-                        text = "Mục Lục (${successState.chapters.size} chương)",
-                        style = MaterialTheme.typography.titleMedium,
-                        modifier = Modifier.padding(16.dp)
-                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Mục Lục (${successState.chapters.size} chương)",
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                        IconButton(onClick = { viewModel.forceReloadChapters() }) {
+                            Icon(Icons.Default.Refresh, contentDescription = "Tải lại mục lục")
+                        }
+                    }
                     HorizontalDivider()
 
                     LazyColumn(
@@ -132,24 +196,28 @@ fun ReaderScreen(
                             val state = uiState as ReaderUiState.Success
                             Text(
                                 text = state.book.title,
-                                maxLines = 1
+                                maxLines = 1,
+                                color = textColor
                             )
                         } else {
-                            Text("Đọc truyện")
+                            Text("Đọc truyện", color = textColor)
                         }
                     },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = backgroundColor
+                    ),
                     navigationIcon = {
                         IconButton(onClick = onBackClick) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Quay lại")
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Quay lại", tint = textColor)
                         }
                     },
                     actions = {
                         if (uiState is ReaderUiState.Success) {
-                            IconButton(onClick = { viewModel.forceReloadChapters() }) {
-                                Icon(Icons.Default.Refresh, contentDescription = "Tải lại mục lục")
+                            IconButton(onClick = { showSettingsSheet = true }) {
+                                Icon(Icons.Default.Settings, contentDescription = "Cài đặt", tint = textColor)
                             }
                             IconButton(onClick = { scope.launch { drawerState.open() } }) {
-                                Icon(Icons.Default.List, contentDescription = "Mục lục")
+                                Icon(Icons.Default.List, contentDescription = "Mục lục", tint = textColor)
                             }
                         }
                     }
@@ -160,6 +228,7 @@ fun ReaderScreen(
                     val state = uiState as ReaderUiState.Success
                     Surface(
                         tonalElevation = 3.dp,
+                        color = backgroundColor,
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Row(
@@ -173,19 +242,28 @@ fun ReaderScreen(
                                 onClick = { viewModel.previousChapter() },
                                 enabled = state.currentChapterIndex > 0
                             ) {
-                                Icon(Icons.Default.ArrowBackIosNew, contentDescription = "Chương trước")
+                                Icon(
+                                    Icons.Default.ArrowBackIosNew,
+                                    contentDescription = "Chương trước",
+                                    tint = if (state.currentChapterIndex > 0) textColor else textColor.copy(alpha = 0.3f)
+                                )
                             }
 
                             Text(
                                 text = "${state.currentChapterIndex + 1} / ${state.chapters.size}",
-                                style = MaterialTheme.typography.labelLarge
+                                style = MaterialTheme.typography.labelLarge,
+                                color = textColor
                             )
 
                             IconButton(
                                 onClick = { viewModel.nextChapter() },
                                 enabled = state.currentChapterIndex < state.chapters.size - 1
                             ) {
-                                Icon(Icons.Default.ArrowForwardIos, contentDescription = "Chương sau")
+                                Icon(
+                                    Icons.Default.ArrowForwardIos,
+                                    contentDescription = "Chương sau",
+                                    tint = if (state.currentChapterIndex < state.chapters.size - 1) textColor else textColor.copy(alpha = 0.3f)
+                                )
                             }
                         }
                     }
@@ -195,6 +273,7 @@ fun ReaderScreen(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
+                    .background(backgroundColor)
                     .padding(innerPadding)
             ) {
                 when (val state = uiState) {
@@ -226,13 +305,9 @@ fun ReaderScreen(
                     is ReaderUiState.Success -> {
                         val scrollState = rememberScrollState()
 
-                        // Đánh dấu đã khôi phục xong vị trí ban đầu
                         var isInitialRestored by remember(state.book.id) { mutableStateOf(false) }
-
-                        // Theo dõi chương trước đó
                         var activeChapterIndex by remember(state.book.id) { mutableIntStateOf(state.currentChapterIndex) }
 
-                        // 1. Phục hồi vị trí cuộn ban đầu đúng chương đã đọc dở
                         LaunchedEffect(state.book.id) {
                             if (!isInitialRestored) {
                                 if (state.book.lastPosition > 0) {
@@ -242,7 +317,6 @@ fun ReaderScreen(
                             }
                         }
 
-                        // 2. Chỉ cuộn về 0 nếu thực sự đổi chương
                         LaunchedEffect(state.currentChapterIndex) {
                             if (isInitialRestored && state.currentChapterIndex != activeChapterIndex) {
                                 scrollState.scrollTo(0)
@@ -250,12 +324,11 @@ fun ReaderScreen(
                             }
                         }
 
-                        // 3. Sử dụng debounce(300ms) để giảm tần suất ghi vào DB khi cuộn màn hình
                         LaunchedEffect(scrollState, isInitialRestored, state.currentChapterIndex) {
                             if (isInitialRestored) {
                                 snapshotFlow { scrollState.value }
                                     .distinctUntilChanged()
-                                    .debounce(300L) // Chờ dừng vuốt 300ms mới lưu vào DB
+                                    .debounce(300L)
                                     .collect { position ->
                                         val totalChapters = state.chapters.size
                                         val progress = if (totalChapters > 0) {
@@ -287,8 +360,9 @@ fun ReaderScreen(
                             Text(
                                 text = state.currentChapterContent.ifBlank { "Đang tải nội dung..." },
                                 style = MaterialTheme.typography.bodyLarge.copy(
-                                    fontSize = 18.sp,
-                                    lineHeight = 28.sp
+                                    fontSize = fontSizeSp,
+                                    lineHeight = lineHeightSp,
+                                    color = textColor
                                 ),
                                 modifier = Modifier.fillMaxWidth()
                             )
