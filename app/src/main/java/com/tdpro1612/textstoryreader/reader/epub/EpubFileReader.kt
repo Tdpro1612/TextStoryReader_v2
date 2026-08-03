@@ -3,7 +3,10 @@ package com.tdpro1612.textstoryreader.reader.epub
 import android.content.Context
 import android.util.Log
 import com.tdpro1612.textstoryreader.reader.BookChapter
-import com.tdpro1612.textstoryreader.reader.cache.ChapterCacheManager
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import org.jsoup.Jsoup
 import org.jsoup.parser.Parser
 import java.io.File
@@ -17,14 +20,12 @@ class EpubFileReader(
 
     private val TAG = "EpubFileReaderPerformance"
 
-    // Regex chống bắt nhầm từ ghép như "Hồi lâu sau", "Tập kích x12"...
-    // Regex tối giản & siêu sạch: Chỉ tập trung vào các từ khóa chương chuẩn xác
     private val strictChapterPattern = Regex(
-        """(?i)^\s*(?:Chương|Chapter|Quyển|Vol|Tiết|Ngoại truyện|Lời bạt|Mở đầu|Kết thúc)\s*(\d+|[0-9IVXLCDM]+)?\b"""
+        """(?i)^\s*(?:Chương|Chapter|Quyển|Vol|Tiết|Ngoại truyện|Lời bạt|Mở đầu)\s*(\d+|[0-9IVXLCDM]+)?\b|^\s*Hồi\s*(\d+|[0-9IVXLCDM]+|:|\-)\b""",
+        RegexOption.IGNORE_CASE
     )
 
     private val naturalCompareTokenRegex = Regex("""\d+|\D+""")
-    private val cacheManager = ChapterCacheManager(context.cacheDir)
     private val targetTags = arrayOf("h1", "h2", "h3", "h4", "h5", "h6", "p")
 
     private fun fastFindTagMatches(html: String): List<Triple<String, String, Int>> {
@@ -61,12 +62,20 @@ class EpubFileReader(
                     }
 
                     val closeTag = "</$matchedTag>"
-                    val closeIdx = html.indexOf(closeTag, gtIdx + 1, ignoreCase = true)
+                    val closeLen = closeTag.length
+                    var closeIdx = -1
+
+                    for (j in (gtIdx + 1)..(n - closeLen)) {
+                        if (html[j] == '<' && html.regionMatches(j, closeTag, 0, closeLen, ignoreCase = true)) {
+                            closeIdx = j
+                            break
+                        }
+                    }
 
                     if (closeIdx != -1) {
                         val innerHtml = html.substring(gtIdx + 1, closeIdx)
                         results.add(Triple(matchedTag, innerHtml, i))
-                        i = closeIdx + closeTag.length
+                        i = closeIdx + closeLen
                         continue
                     } else {
                         i = gtIdx + 1
@@ -111,27 +120,13 @@ class EpubFileReader(
         return hasChapterKeywordFast(innerHtml)
     }
 
-    fun getChapterList(): List<BookChapter> {
+    suspend fun getChapterList(): List<BookChapter> {
         val totalStart = System.currentTimeMillis()
-        val bookId = cacheFolder.name
-
-        var cachedChapters: List<BookChapter>? = null
-        val cacheTime = measureTimeMillis {
-            try {
-                cachedChapters = cacheManager.getCachedChapters(bookId)
-            } catch (e: Exception) {
-                Log.e(TAG, "❌ Lỗi đọc Cache: ${e.localizedMessage}")
-            }
-        }
-
-        if (!cachedChapters.isNullOrEmpty()) {
-            Log.d(TAG, "⚡ [CACHE HIT] Đã lấy ${cachedChapters!!.size} chương từ Cache trong ${cacheTime}ms (Book: $bookId)")
-            return cachedChapters!!
-        }
 
         var chapters: List<BookChapter> = emptyList()
         val parseTime = measureTimeMillis {
             val rawChapters = parseChapterListFromDisk()
+            Log.d(TAG, "🔢 Sau parse trước khi lọc junk: ${rawChapters.size} chương")
             chapters = rawChapters
                 .filter { chapter -> !isJunkChapterTitle(chapter.title) }
                 .mapIndexed { index, chapter ->
@@ -140,7 +135,6 @@ class EpubFileReader(
         }
         Log.d(TAG, "🔢 Sau parse + lọc junk: ${chapters.size} chương")
 
-        // 1. Tìm vị trí index đầu tiên thỏa mãn điều kiện bắt đầu (quét cực nhanh từ trên xuống)
         val startIndex = chapters.indexOfFirst { chapter ->
             val titleLower = chapter.title.lowercase().trim()
             titleLower.contains("chương 1:") ||
@@ -152,63 +146,41 @@ class EpubFileReader(
                     titleLower == "1" ||
                     titleLower.contains("mở đầu") ||
                     titleLower.contains("giới thiệu")
-//                    titleLower.contains("vol 1") ||
-//                    titleLower.contains("quyển 1")
         }
         Log.d(TAG, "🎯 startIndex tìm thấy = $startIndex" + if (startIndex != -1) " (title: \"${chapters[startIndex].title}\")" else "")
-        // 2. Nếu tìm thấy (index >= 0), cắt danh sách từ đó về sau.
-        // Nếu không tìm thấy, giữ nguyên danh sách cũ.
+
         chapters = if (startIndex != -1) {
             chapters.subList(startIndex, chapters.size).toMutableList()
         } else {
             chapters
         }
         Log.d(TAG, "🔢 Sau cắt startIndex: ${chapters.size} chương")
-        // 3. 🧹 KHẮC PHỤC TRÙNG LẶP: Lọc bỏ các tiêu đề trùng nhau nằm sát cạnh nhau (hiện tượng file gộp dính 2 chương 1)
+
         if (chapters.size >= 2) {
             val firstTitle = chapters[0].title.lowercase().trim()
             val secondTitle = chapters[1].title.lowercase().trim()
 
             if (firstTitle == secondTitle) {
-                chapters = chapters.drop(1).toMutableList() // bỏ chương đầu tiên (index 0), giữ chương thứ 2
+                chapters = chapters.drop(1).toMutableList()
             }
         }
         Log.d(TAG, "🔢 Sau lọc trùng lặp: ${chapters.size} chương")
-        val cacheWriteTime = measureTimeMillis {
-            if (chapters.isNotEmpty()) {
-                try {
-                    cacheManager.saveChaptersToCache(bookId, chapters)
-                } catch (e: Exception) {
-                    Log.e(TAG, "❌ Lỗi ghi Cache: ${e.localizedMessage}")
-                }
-            }
-        }
+
         val totalTime = System.currentTimeMillis() - totalStart
         Log.i(TAG, "--------------------------------------------------")
-        Log.i(TAG, "📊 [PERFORMANCE SUMMARY] Sách: $bookId")
-        Log.i(TAG, "   • Đọc Cache: ${cacheTime}ms")
+        Log.i(TAG, "📊 [PERFORMANCE SUMMARY]")
         Log.i(TAG, "   • Parse từ Disk: ${parseTime}ms")
-        Log.i(TAG, "   • Ghi Cache: ${cacheWriteTime}ms")
         Log.i(TAG, "   👉 TỔNG THỜI GIAN: ${totalTime}ms (Tổng số: ${chapters.size} chương)")
         Log.i(TAG, "--------------------------------------------------")
 
         return chapters
     }
 
-    fun forceReloadChapterList(): List<BookChapter> {
-        val bookId = cacheFolder.name
-        cacheManager.clearCache(bookId)
-        return getChapterList()
-    }
-
-    private fun parseChapterListFromDisk(): List<BookChapter> {
+    private suspend fun parseChapterListFromDisk(): List<BookChapter> {
         val chapters = mutableListOf<BookChapter>()
 
         var opfTime = 0L
         var tocTime = 0L
-        var htmlReadTime = 0L
-        var tagMatchTime = 0L
-        var chapterExtractTime = 0L
 
         val htmlPathsInSpine: List<String>
         opfTime = measureTimeMillis {
@@ -224,8 +196,6 @@ class EpubFileReader(
         val tocCount = tocList.size
         val diff = abs(htmlCount - tocCount)
 
-        // 🛑 ĐIỀU KIỆN KÍCH HOẠT FAST-PATH AN TOÀN:
-        // Chỉ bật Fast-Path khi số chương trong TOC xấp xỉ số file HTML (Mỗi file 1 chương)
         if (htmlCount > 0 && tocCount > 0 && diff <= 10) {
             Log.i(TAG, "🚀 [FAST-PATH ACTIVE] Số HTML ($htmlCount) và số TOC ($tocCount) tương đương. Lấy trực tiếp từ TOC!")
 
@@ -253,7 +223,6 @@ class EpubFileReader(
             Log.d(TAG, "🐢 [DEEP-SCAN ACTIVE] Phát hiện sách gộp/lệch lớn ($htmlCount file HTML vs $tocCount title TOC). Chuyển sang Deep-Scan!")
         }
 
-        // Tạo map file -> title để hỗ trợ fallback khi scan
         val tocFileMap = mutableMapOf<String, String>()
         for ((src, title) in tocList) {
             val fileName = src.substringBefore("#").substringAfterLast("/")
@@ -262,82 +231,53 @@ class EpubFileReader(
             }
         }
 
-        // 🐢 DEEP-SCAN: Quét 75 file HTML để trích xuất toàn bộ 1628 chương
-        var globalIndex = 0
-        var pendingPath: String? = null
-        var pendingHtml: String? = null
-        var pendingTagMatches: List<Triple<String, String, Int>>? = null
-
+        // 🟢 DEEP SCAN CHẠY ĐA LUỒNG TRÊN DISPATCHERS.DEFAULT
         val loopTime = measureTimeMillis {
-            for (i in htmlPathsInSpine.indices) {
-                val relativePath = htmlPathsInSpine[i]
+            val isFastPathActive = htmlCount > 0 && tocCount > 0 && diff <= 10
 
-                val fullHtml: String
-                val tagMatchesForCurrent: List<Triple<String, String, Int>>
+            val rawExtractedList = coroutineScope {
+                htmlPathsInSpine.mapIndexed { i, relativePath ->
+                    async(Dispatchers.Default) {
+                        val fullHtml = readTextFile(relativePath)
+                        if (fullHtml.isBlank()) {
+                            emptyList()
+                        } else {
+                            val nextRelativePath = if (i < htmlPathsInSpine.size - 1) htmlPathsInSpine[i + 1] else ""
 
-                if (pendingPath == relativePath && pendingHtml != null && pendingTagMatches != null) {
-                    fullHtml = pendingHtml
-                    tagMatchesForCurrent = pendingTagMatches
-                } else {
-                    val readMs = measureTimeMillis { fullHtml = readTextFile(relativePath) }
-                    htmlReadTime += readMs
+                            val tagMatches = if (isFastPathActive) emptyList() else fastFindTagMatches(fullHtml)
+                            val nextTagMatches = if (!isFastPathActive && nextRelativePath.isNotBlank()) {
+                                val nextHtml = readTextFile(nextRelativePath)
+                                if (nextHtml.isNotBlank()) fastFindTagMatches(nextHtml) else null
+                            } else null
 
-                    val matchMs = measureTimeMillis { tagMatchesForCurrent = fastFindTagMatches(fullHtml) }
-                    tagMatchTime += matchMs
-                }
-
-                if (fullHtml.isBlank()) {
-                    pendingPath = null
-                    pendingHtml = null
-                    pendingTagMatches = null
-                    continue
-                }
-
-                val nextRelativePath = if (i < htmlPathsInSpine.size - 1) htmlPathsInSpine[i + 1] else ""
-
-                var nextTagMatches: List<Triple<String, String, Int>>? = null
-                if (nextRelativePath.isNotBlank()) {
-                    var nextHtml = ""
-                    val readMs = measureTimeMillis { nextHtml = readTextFile(nextRelativePath) }
-                    htmlReadTime += readMs
-
-                    val matchMs = measureTimeMillis { nextTagMatches = fastFindTagMatches(nextHtml) }
-                    tagMatchTime += matchMs
-
-                    pendingPath = nextRelativePath
-                    pendingHtml = nextHtml
-                    pendingTagMatches = nextTagMatches
-                } else {
-                    pendingPath = null
-                    pendingHtml = null
-                    pendingTagMatches = null
-                }
-
-                val extractMs = measureTimeMillis {
-                    val extractedChapters = extractChaptersFromRawHtml(
-                        relativePath = relativePath,
-                        nextRelativePath = nextRelativePath,
-                        fullHtml = fullHtml,
-                        tagMatches = tagMatchesForCurrent,
-                        nextFileTagMatches = nextTagMatches,
-                        tocMap = tocFileMap
-                    )
-
-                    for (ch in extractedChapters) {
-                        chapters.add(ch.copy(index = globalIndex++))
+                            extractChaptersFromRawHtml(
+                                relativePath = relativePath,
+                                nextRelativePath = nextRelativePath,
+                                fullHtml = fullHtml,
+                                tagMatches = tagMatches,
+                                nextFileTagMatches = nextTagMatches,
+                                tocMap = tocFileMap,
+                                isFastPath = isFastPathActive
+                            )
+                        }
                     }
+                }.awaitAll()
+            }
+
+            var globalIndex = 0
+            for (chapterGroup in rawExtractedList) {
+                for (ch in chapterGroup) {
+                    chapters.add(ch.copy(index = globalIndex++))
                 }
-                chapterExtractTime += extractMs
             }
         }
 
         Log.d(TAG, "  🔍 [DETAIL PARSE BREAKDOWN]")
         Log.d(TAG, "     1. Read OPF Structure: ${opfTime}ms (${htmlPathsInSpine.size} files HTML)")
         Log.d(TAG, "     2. Read TOC NCX: ${tocTime}ms (${tocList.size} titles in TOC)")
-        Log.d(TAG, "     3. Total File I/O (Read Disk): ${htmlReadTime}ms")
-        Log.d(TAG, "     4. Fast Tag Matching: ${tagMatchTime}ms")
-        Log.d(TAG, "     5. Chapter Extractor Logic: ${chapterExtractTime}ms")
-        Log.d(TAG, "     ⏱️ Total Loop Time: ${loopTime}ms")
+        Log.d(TAG, "     ⏱️ Total Loop Time (Parallel): ${loopTime}ms")
+
+        Log.d(TAG, "📊 [SUMMARY RAW PARSE] Tổng số chương bóc tách thô trước khi lọc/cắt = ${chapters.size}")
 
         return chapters
     }
@@ -348,25 +288,45 @@ class EpubFileReader(
         fullHtml: String,
         tagMatches: List<Triple<String, String, Int>>,
         nextFileTagMatches: List<Triple<String, String, Int>>?,
-        tocMap: Map<String, String>
+        tocMap: Map<String, String>,
+        isFastPath: Boolean = false
     ): List<BookChapter> {
+        val cleanFileName = relativePath.substringAfterLast("/")
+        val titleFromToc = tocMap[cleanFileName] ?: tocMap[relativePath]
+
+        // 🚀 LỐI TẮT BỎ QUA SOI THẺ HTML NẾU ĐÃ CÓ TITLE VÀ ĐANG CHẠY FAST-PATH
+        if (isFastPath && titleFromToc != null) {
+            return listOf(
+                BookChapter(
+                    index = 0,
+                    title = titleFromToc,
+                    path = relativePath,
+                    path_next = "",
+                    startCharOffset = 0,
+                    endCharOffset = -1
+                )
+            )
+        }
+
         val result = mutableListOf<BookChapter>()
         val rawNodes = mutableListOf<Pair<String, Int>>()
 
         var tocLinkCount = 0
 
-        for ((_, innerHtml, startIdx) in tagMatches) {
+        for ((tagName, innerHtml, startIdx) in tagMatches) {
             val innerLen = innerHtml.length
 
-            if (innerLen in 3..200) {
+            if (innerLen in 3..400) {
                 if (isLikelyTocLinkEntry(innerHtml)) {
                     tocLinkCount++
                     continue
                 }
 
                 if (hasChapterKeywordFast(innerHtml)) {
-                    val cleanText = fastStripHtmlTags(innerHtml)
-                    if (cleanText.length in 3..100 && isStrictChapterTitle(cleanText)) {
+                    val rawCleanText = fastStripHtmlTags(innerHtml)
+                    val cleanText = cleanChapterTitle(rawCleanText)
+
+                    if (cleanText.length in 3..90 && isStrictChapterTitle(cleanText)) {
                         rawNodes.add(Pair(cleanText, startIdx))
                     }
                 }
@@ -379,11 +339,27 @@ class EpubFileReader(
 
         val filteredNodes = mutableListOf<Pair<String, Int>>()
         val rawSize = rawNodes.size
+        var skipNext = false
+
         for (i in 0 until rawSize) {
+            if (skipNext) {
+                skipNext = false
+                continue
+            }
+
             val currentNode = rawNodes[i]
             if (i < rawSize - 1) {
                 val nextNode = rawNodes[i + 1]
-                if (nextNode.second - currentNode.second < 80) {
+                val distance = nextNode.second - currentNode.second
+
+                if (distance in 0..80) {
+                    if (currentNode.first.length <= nextNode.first.length) {
+                        filteredNodes.add(currentNode)
+                        skipNext = true
+                    } else {
+                        filteredNodes.add(nextNode)
+                        skipNext = true
+                    }
                     continue
                 }
             }
@@ -400,6 +376,7 @@ class EpubFileReader(
             }
         }
 
+        // Sách gộp (Chứa >= 2 chương trong 1 file HTML)
         if (uniqueNodes.size >= 2) {
             for (i in uniqueNodes.indices) {
                 val (title, startPos) = uniqueNodes[i]
@@ -433,12 +410,12 @@ class EpubFileReader(
             return result
         }
 
-        val cleanFileName = relativePath.substringAfterLast("/")
-        val titleFromToc = tocMap[cleanFileName] ?: tocMap[relativePath]
-
-        val singleTitle = titleFromToc
-            ?: uniqueNodes.firstOrNull()?.first
-            ?: extractFirstLineTitle(fullHtml, cleanFileName)
+        // 1 chương / File
+        val singleTitle = when {
+            titleFromToc != null -> titleFromToc
+            uniqueNodes.isNotEmpty() -> uniqueNodes.first().first
+            else -> extractFirstLineTitle(fullHtml, cleanFileName)
+        }
 
         result.add(
             BookChapter(
@@ -454,14 +431,28 @@ class EpubFileReader(
         return result
     }
 
+    private fun cleanChapterTitle(rawTitle: String): String {
+        var clean = rawTitle.lines().firstOrNull { it.isNotBlank() } ?: rawTitle
+        clean = clean.trim()
+
+        if (clean.length > 90) {
+            val cutIndex = clean.indexOfAny(listOf(".", " - ", ": ", "：", "\t"))
+            if (cutIndex in 10..80) {
+                clean = clean.substring(0, cutIndex).trim()
+            } else {
+                clean = clean.take(80).trim()
+            }
+        }
+
+        return clean
+    }
+
     private fun hasChapterKeywordFast(text: String): Boolean {
         return text.contains("Chương", ignoreCase = true) ||
                 text.contains("Chapter", ignoreCase = true) ||
-                text.contains("Quyển", ignoreCase = true) ||
                 text.contains("Tập", ignoreCase = true) ||
                 text.contains("Vol", ignoreCase = true) ||
-                text.contains("Hồi", ignoreCase = true) ||
-                text.contains("Tiết", ignoreCase = true)
+                text.contains("Hồi", ignoreCase = true)
     }
 
     private fun fastStripHtmlTags(input: String): String {
@@ -519,11 +510,17 @@ class EpubFileReader(
     private fun getOrderedHtmlPathsFromOpf(): List<String> {
         var paths = listOf<String>()
         try {
+            val opfStartTime = System.currentTimeMillis()
             val opfFile: File? = cacheFolder.walk().firstOrNull { it.extension.lowercase() == "opf" }
 
             if (opfFile == null) {
-                return getAllValidHtmlFilesOnDisk().map { it.relativeTo(cacheFolder).path.replace("\\", "/") }
+//                Log.w(TAG, "⚠️ [OPF Parser] Không tìm thấy file .opf trong cacheFolder! Chuyển sang quét tất cả file HTML trên đĩa.")
+                val fallbackPaths = getAllValidHtmlFilesOnDisk().map { it.relativeTo(cacheFolder).path.replace("\\", "/") }
+//                Log.d(TAG, "📁 [OPF Fallback] Đã tìm thấy ${fallbackPaths.size} file HTML trực tiếp từ đĩa.")
+                return fallbackPaths
             }
+
+//            Log.d(TAG, "📄 [OPF Parser] Tìm thấy file OPF: ${opfFile.name}")
 
             val opfContent = opfFile.readText(Charsets.UTF_8)
             val doc = Jsoup.parse(opfContent, "", Parser.xmlParser())
@@ -531,6 +528,8 @@ class EpubFileReader(
             val opfFolder = if (opfFile.parentFile != cacheFolder) {
                 opfFile.parentFile.relativeTo(cacheFolder).path.replace("\\", "/") + "/"
             } else ""
+
+//            Log.d(TAG, "📂 [OPF Parser] Relative OPF Folder path: \"$opfFolder\"")
 
             val manifestMap = mutableMapOf<String, String>()
             doc.select("manifest > item").forEach { item ->
@@ -540,24 +539,43 @@ class EpubFileReader(
                     manifestMap[id] = opfFolder + href
                 }
             }
+//            Log.d(TAG, "📦 [OPF Parser] Manifest đọc được ${manifestMap.size} item HTML valid.")
 
             val resultList = mutableListOf<String>()
+            var junkCount = 0
+
             doc.select("spine > itemref").forEach { itemref ->
                 val idref = itemref.attr("idref")
                 val fullPath = manifestMap[idref]
-                if (!fullPath.isNullOrBlank() && !isJunkHtmlFile(fullPath)) {
-                    resultList.add(fullPath)
+                if (!fullPath.isNullOrBlank()) {
+                    if (!isJunkHtmlFile(fullPath)) {
+                        resultList.add(fullPath)
+                    } else {
+                        junkCount++
+                    }
+                } else {
+//                    Log.w(TAG, "⚠️ [OPF Parser] Spine chứa idref \"$idref\" nhưng không tìm thấy trong Manifest!")
                 }
             }
+
             paths = resultList
+            val duration = System.currentTimeMillis() - opfStartTime
+//            Log.d(TAG, "✅ [OPF Parser] Hoàn thành đọc Spine trong ${duration}ms: Lấy được ${paths.size} file HTML hợp lệ (Đã lọc bỏ $junkCount file rác/bìa/mục lục).")
+
         } catch (e: Exception) {
-            e.printStackTrace()
+//            Log.e(TAG, "❌ [OPF Parser] Lỗi xảy ra khi parse file OPF: ${e.localizedMessage}", e)
         }
 
-        return if (paths.isNotEmpty()) paths else getAllValidHtmlFilesOnDisk().map { it.relativeTo(cacheFolder).path.replace("\\", "/") }
+        return if (paths.isNotEmpty()) {
+            paths
+        } else {
+//            Log.w(TAG, "⚠️ [OPF Parser] Danh sách Spine rỗng! Chuyển sang quét tất cả file HTML trên đĩa.")
+            val fallbackPaths = getAllValidHtmlFilesOnDisk().map { it.relativeTo(cacheFolder).path.replace("\\", "/") }
+//            Log.d(TAG, "📁 [OPF Fallback] Đã tìm thấy ${fallbackPaths.size} file HTML trực tiếp từ đĩa.")
+            fallbackPaths
+        }
     }
 
-    // Lấy danh sách đầy đủ các cặp (src, title) từ TOC không bị đè trùng
     private fun parseTocList(): List<Pair<String, String>> {
         val titleList = mutableListOf<Pair<String, String>>()
         try {
@@ -582,12 +600,12 @@ class EpubFileReader(
                     }
                 }
 
-                android.util.Log.d("EpubParser", "✅ Parse TOC xong: ${titleList.size} title")
+//                Log.d("EpubParser", "✅ Parse TOC xong: ${titleList.size} title")
             } else {
-                android.util.Log.e("EpubParser", "❌ KHÔNG TÌM THẤY FILE .NCX TRONG CACHE FOLDER!")
+//                Log.e("EpubParser", "❌ KHÔNG TÌM THẤY FILE .NCX TRONG CACHE FOLDER!")
             }
         } catch (e: Exception) {
-            android.util.Log.e("EpubParser", "❌ LỖI PARSE TOC NCX: ${e.message}")
+//            Log.e("EpubParser", "❌ LỖI PARSE TOC NCX: ${e.message}")
             e.printStackTrace()
         }
         return titleList
@@ -638,7 +656,6 @@ class EpubFileReader(
             "toc",
             "index"
         )
-
         return junkTitles.contains(clean) || clean.startsWith("mục lục")
     }
 
