@@ -13,6 +13,9 @@ import com.tdpro1612.textstoryreader.scanner.BookScanManager
 import com.tdpro1612.textstoryreader.scanner.ScanProgressState
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 class BookManager(private val context: Context) {
 
@@ -112,15 +115,18 @@ class BookManager(private val context: Context) {
             }
         }
 
-        // 🛡️ ĐIỂM CHẶN DUY NHẤT: Đảm bảo dung lượng cache an toàn trước khi giải nén/mở sách mới
-        BookCacheManager.ensureCacheSpace(context)
+
 
         // 2. Nếu DB chưa có -> Parse qua Reader
         Log.d("BookManager", "🐢 [CACHE MISS] Parse trực tiếp từ file qua Reader cho bookId = $bookId")
         val reader = ReaderFactory.getReader(bookUri)
         val parsedChapters = reader.getChapterList(context, bookUri)
-
-        // 3. Lưu vào DB để cache cho các lần sau
+        // 3. Sau khi xả nén/parse xong -> Bắn 1 request chạy ngầm dọn dẹp cache cũ nếu vượt 500MB
+        // Dùng CoroutineScope(Dispatchers.IO) ở đây rất gọn và nằm đúng tầng Manager
+        CoroutineScope(Dispatchers.IO).launch {
+        BookCacheManager.ensureCacheSpaceAsync(context)
+        }
+        // 4. Lưu vào DB để cache cho các lần sau
         if (parsedChapters.isNotEmpty()) {
             val entities = parsedChapters.map { chapter ->
                 ChapterEntity(
@@ -143,9 +149,6 @@ class BookManager(private val context: Context) {
     }
 
     suspend fun getChapterContent(bookUri: Uri, chapter: BookChapter): String {
-        // 🛡️ ĐIỂM CHẶN DUY NHẤT: Kiểm tra trần dung lượng trước khi nạp nội dung chương
-        BookCacheManager.ensureCacheSpace(context)
-
         val reader = ReaderFactory.getReader(bookUri)
         return reader.getChapterContent(context, bookUri, chapter)
     }

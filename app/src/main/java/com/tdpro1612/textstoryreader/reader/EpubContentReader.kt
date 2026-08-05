@@ -16,17 +16,31 @@ class EpubContentReader : BookContentReader {
      * Lấy thư mục Cache của sách.
      * Nếu thư mục chưa tồn tại hoặc bị Android xóa khi tắt app -> Tự động giải nén lại.
      */
+    // Cache folder ngay trên RAM để chuyển chương không cần check đĩa
+    private var currentUri: Uri? = null
+    private var cachedFolder: File? = null
+
     private suspend fun ensureCacheFolder(context: Context, uri: Uri): File = withContext(Dispatchers.IO) {
+        // ⚡ 1. Nếu đang đọc cùng 1 cuốn sách và RAM đã có sẵn reference -> Trả về ngay (0 ms)
+        if (currentUri == uri && cachedFolder?.exists() == true) {
+            return@withContext cachedFolder!!
+        }
+
         val folderName = "epub_cache_" + uri.toString().hashCode()
         val cacheFolder = File(context.cacheDir, folderName)
 
-        // Nếu thư mục tồn tại và có chứa file bên trong thì tái sử dụng
-        if (cacheFolder.exists() && cacheFolder.listFiles()?.isNotEmpty() == true) {
-            return@withContext cacheFolder
+        // ⚡ 2. CHỈ CHECK THƯ MỤC TỒN TẠI (KHÔNG dùng listFiles() để tránh quét 6.700+ file)
+        if (cacheFolder.exists()) {
+            currentUri = uri
+            cachedFolder = cacheFolder
+            return@withContext cacheFolder // Chạy dưới < 1 ms
         }
 
-        // Ngược lại (mới mở app / cache bị xóa) -> Tiến hành Unzip lại
-        return@withContext EpubUnzipper.unzipEpubToCache(context, uri)
+        // 3. Nếu chưa có (sách mới mở lần đầu) -> Tiến hành Unzip
+        val unzippedFolder = EpubUnzipper.unzipEpubToCache(context, uri)
+        currentUri = uri
+        cachedFolder = unzippedFolder
+        return@withContext unzippedFolder
     }
 
     /**

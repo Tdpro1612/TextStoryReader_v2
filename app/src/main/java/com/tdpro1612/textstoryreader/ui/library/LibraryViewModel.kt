@@ -47,10 +47,10 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
     }.stateIn(viewModelScope, SharingStarted.Eagerly, 1)
 
     init {
-        // 🧹 Dọn dẹp sạch sẽ tất cả cache EPUB tồn đọng từ các phiên chạy cũ khi mở Thư viện
-        viewModelScope.launch(Dispatchers.IO) {
-            EpubUnzipper.clearAllEpubCache(getApplication())
-        }
+//        // 🧹 Dọn dẹp sạch sẽ tất cả cache EPUB tồn đọng từ các phiên chạy cũ khi mở Thư viện
+//        viewModelScope.launch(Dispatchers.IO) {
+//            EpubUnzipper.clearAllEpubCache(getApplication())
+//        }
 
         // Tự động load lại trang khi thay đổi từ khóa tìm kiếm hoặc số trang
         viewModelScope.launch {
