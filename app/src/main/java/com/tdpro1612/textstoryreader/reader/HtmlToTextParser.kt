@@ -1,6 +1,5 @@
-package com.tdpro1612.textstoryreader.reader.epub
+package com.tdpro1612.textstoryreader.reader
 
-import com.tdpro1612.textstoryreader.reader.BookChapter
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Element
 import org.jsoup.nodes.Node
@@ -15,28 +14,36 @@ object HtmlToTextParser {
         "li", "blockquote", "section", "article", "dt", "dd"
     )
 
-    /**
-     * Hàm chính: Nhận BookChapter và thư mục Cache để trích xuất ra Text chuẩn nhất.
-     */
+    // 🚀 CACHE nội dung file HTML đã đọc, tránh readText() lặp lại mỗi lần đổi chương
+    private data class CachedHtml(val filePath: String, val content: String)
+    @Volatile private var cache: CachedHtml? = null
+
+    private fun readHtmlCached(file: File): String {
+        val path = file.absolutePath
+        val cached = cache
+        if (cached != null && cached.filePath == path) {
+            return cached.content
+        }
+        val text = file.readText(Charsets.UTF_8)
+        cache = CachedHtml(path, text)
+        return text
+    }
+
     fun parseChapter(chapter: BookChapter, cacheFolder: File): String {
         val rawHtml = extractRawHtmlFromChapter(chapter, cacheFolder)
         if (rawHtml.isBlank()) return ""
         return parseHtmlToText(rawHtml)
     }
 
-    /**
-     * Trích xuất đoạn HTML chính xác dựa vào Offset và path / path_next của BookChapter
-     */
     private fun extractRawHtmlFromChapter(chapter: BookChapter, cacheFolder: File): String {
         if (chapter.path.isBlank()) return ""
 
         val primaryFile = File(cacheFolder, chapter.path)
         if (!primaryFile.exists()) return ""
 
-        val fullHtml = primaryFile.readText(Charsets.UTF_8)
+        val fullHtml = readHtmlCached(primaryFile)   // <-- thay vì primaryFile.readText(...)
         if (fullHtml.isBlank()) return ""
 
-        // TRƯỜNG HỢP 1: Chương bị đứt đoạn, tràn sang file tiếp theo (path_next)
         if (chapter.path_next.isNotBlank()) {
             val nextFile = File(cacheFolder, chapter.path_next)
             val part1 = if (chapter.startCharOffset in 0..fullHtml.length) {
@@ -44,7 +51,7 @@ object HtmlToTextParser {
             } else fullHtml
 
             val part2 = if (nextFile.exists()) {
-                val nextHtml = nextFile.readText(Charsets.UTF_8)
+                val nextHtml = readHtmlCached(nextFile)   // <-- cache luôn file next
                 if (chapter.endCharOffset in 0..nextHtml.length) {
                     nextHtml.substring(0, chapter.endCharOffset)
                 } else nextHtml
@@ -53,18 +60,17 @@ object HtmlToTextParser {
             return "$part1\n$part2"
         }
 
-        // TRƯỜNG HỢP 2: Nằm trọn trong 1 file HTML nhưng bị cắt theo Offset (File chứa nhiều chương)
         if (chapter.endCharOffset > chapter.startCharOffset && chapter.endCharOffset <= fullHtml.length) {
             return fullHtml.substring(chapter.startCharOffset, chapter.endCharOffset)
         }
 
-        // TRƯỜNG HỢP 3: Lấy toàn bộ file HTML (endCharOffset = -1)
         if (chapter.startCharOffset > 0 && chapter.startCharOffset < fullHtml.length) {
             return fullHtml.substring(chapter.startCharOffset)
         }
 
         return fullHtml
     }
+
 
     /**
      * Parse HTML thành Văn bản thuần (Clean Text)
