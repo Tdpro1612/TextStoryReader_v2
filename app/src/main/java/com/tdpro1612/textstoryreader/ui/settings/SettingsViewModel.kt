@@ -23,7 +23,6 @@ class SettingsViewModel(
             initialValue = ReaderSettings()
         )
 
-    // 🔥 Lấy màu trực tiếp từ preset truyền vào
     fun getThemeColors(preset: ReaderThemePreset): Pair<Color, Color> {
         return Pair(
             Color(preset.backgroundColorHex),
@@ -58,6 +57,18 @@ class SettingsViewModel(
     fun updateKeepScreenOn(enabled: Boolean) {
         viewModelScope.launch {
             settingsManager.updateKeepScreenOn(enabled)
+        }
+    }
+
+    // 🔥 Hàm khôi phục toàn bộ cài đặt về mặc định
+    fun resetToDefault() {
+        viewModelScope.launch {
+            val defaultSettings = ReaderSettings()
+            settingsManager.updateThemePreset(defaultSettings.themePreset)
+            settingsManager.updateFontSize(defaultSettings.fontSizeSp)
+            settingsManager.updateLineHeight(defaultSettings.lineHeightMultiplier)
+            settingsManager.updateFontFamily(defaultSettings.fontFamily)
+            settingsManager.updateKeepScreenOn(defaultSettings.keepScreenOn)
         }
     }
 }
