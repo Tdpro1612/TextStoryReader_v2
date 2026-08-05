@@ -2,6 +2,11 @@ package com.tdpro1612.textstoryreader.settings
 
 import androidx.compose.ui.text.font.FontFamily
 
+enum class ReadMode(val displayName: String) {
+    SCROLL("Cuộn dọc (Continuous Scroll)"),
+    PAGE_FLIP("Lật trang (Page Flip)")
+}
+
 enum class ReaderThemePreset(
     val displayName: String,
     val backgroundColorHex: Long,
@@ -48,5 +53,6 @@ data class ReaderSettings(
     val fontSizeSp: Int = 18,
     val lineHeightMultiplier: Float = 1.4f,
     val fontFamily: FontFamilyOption = FontFamilyOption.DEFAULT,
-    val keepScreenOn: Boolean = true
+    val keepScreenOn: Boolean = true,
+    val readMode: ReadMode = ReadMode.SCROLL
 )

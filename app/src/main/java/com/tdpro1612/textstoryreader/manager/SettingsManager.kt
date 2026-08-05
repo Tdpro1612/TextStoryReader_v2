@@ -8,6 +8,7 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.tdpro1612.textstoryreader.settings.FontFamilyOption
+import com.tdpro1612.textstoryreader.settings.ReadMode
 import com.tdpro1612.textstoryreader.settings.ReaderSettings
 import com.tdpro1612.textstoryreader.settings.ReaderThemePreset
 import kotlinx.coroutines.flow.Flow
@@ -23,11 +24,13 @@ class SettingsManager(private val context: Context) {
         val LINE_HEIGHT = floatPreferencesKey("line_height")
         val FONT_FAMILY = stringPreferencesKey("font_family")
         val KEEP_SCREEN_ON = booleanPreferencesKey("keep_screen_on")
+        val READ_MODE = stringPreferencesKey("read_mode") // Key mới lưu Chế độ đọc
     }
 
     val readerSettingsFlow: Flow<ReaderSettings> = context.dataStore.data.map { pref ->
         val themeName = pref[Keys.THEME_PRESET]
         val fontName = pref[Keys.FONT_FAMILY]
+        val modeName = pref[Keys.READ_MODE]
 
         ReaderSettings(
             themePreset = themeName?.let {
@@ -38,7 +41,10 @@ class SettingsManager(private val context: Context) {
             fontFamily = fontName?.let {
                 runCatching { FontFamilyOption.valueOf(it) }.getOrNull()
             } ?: FontFamilyOption.DEFAULT,
-            keepScreenOn = pref[Keys.KEEP_SCREEN_ON] ?: true
+            keepScreenOn = pref[Keys.KEEP_SCREEN_ON] ?: true,
+            readMode = modeName?.let {
+                runCatching { ReadMode.valueOf(it) }.getOrNull()
+            } ?: ReadMode.SCROLL // Mặc định là Cuộn dọc
         )
     }
 
@@ -60,5 +66,10 @@ class SettingsManager(private val context: Context) {
 
     suspend fun updateKeepScreenOn(enabled: Boolean) {
         context.dataStore.edit { pref -> pref[Keys.KEEP_SCREEN_ON] = enabled }
+    }
+
+    // Hàm cập nhật Chế độ đọc (Cuộn dọc / Lật trang)
+    suspend fun updateReadMode(readMode: ReadMode) {
+        context.dataStore.edit { pref -> pref[Keys.READ_MODE] = readMode.name }
     }
 }

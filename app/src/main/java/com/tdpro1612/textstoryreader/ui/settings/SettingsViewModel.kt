@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.tdpro1612.textstoryreader.manager.SettingsManager
 import com.tdpro1612.textstoryreader.settings.FontFamilyOption
+import com.tdpro1612.textstoryreader.settings.ReadMode
 import com.tdpro1612.textstoryreader.settings.ReaderSettings
 import com.tdpro1612.textstoryreader.settings.ReaderThemePreset
 import kotlinx.coroutines.flow.SharingStarted
@@ -60,6 +61,12 @@ class SettingsViewModel(
         }
     }
 
+    fun updateReadMode(readMode: ReadMode) {
+        viewModelScope.launch {
+            settingsManager.updateReadMode(readMode)
+        }
+    }
+
     // 🔥 Hàm khôi phục toàn bộ cài đặt về mặc định
     fun resetToDefault() {
         viewModelScope.launch {
@@ -69,6 +76,7 @@ class SettingsViewModel(
             settingsManager.updateLineHeight(defaultSettings.lineHeightMultiplier)
             settingsManager.updateFontFamily(defaultSettings.fontFamily)
             settingsManager.updateKeepScreenOn(defaultSettings.keepScreenOn)
+            settingsManager.updateReadMode(defaultSettings.readMode)
         }
     }
 }

@@ -10,13 +10,10 @@ import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowBackIosNew
@@ -32,13 +29,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.tdpro1612.textstoryreader.manager.SettingsManager
 import com.tdpro1612.textstoryreader.ui.settings.SettingsScreen
 import com.tdpro1612.textstoryreader.ui.settings.SettingsViewModel
 import kotlinx.coroutines.FlowPreview
-import kotlinx.coroutines.flow.debounce
-import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 
 class ReaderActivity : ComponentActivity() {
@@ -106,10 +100,6 @@ fun ReaderScreen(
             activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         }
     }
-
-    // 🔥 Tính toán fontSize & lineHeight từ ReaderSettings
-    val fontSizeSp = readerSettings.fontSizeSp.sp
-    val lineHeightSp = (readerSettings.fontSizeSp * readerSettings.lineHeightMultiplier).sp
 
     BackHandler(enabled = drawerState.isOpen || showSettingsSheet) {
         if (drawerState.isOpen) {
@@ -303,72 +293,17 @@ fun ReaderScreen(
                         }
                     }
                     is ReaderUiState.Success -> {
-                        val scrollState = rememberScrollState()
-
-                        var isInitialRestored by remember(state.book.id) { mutableStateOf(false) }
-                        var activeChapterIndex by remember(state.book.id) { mutableIntStateOf(state.currentChapterIndex) }
-
-                        LaunchedEffect(state.book.id) {
-                            if (!isInitialRestored) {
-                                if (state.book.lastPosition > 0) {
-                                    scrollState.scrollTo(state.book.lastPosition)
-                                }
-                                isInitialRestored = true
-                            }
-                        }
-
-                        LaunchedEffect(state.currentChapterIndex) {
-                            if (isInitialRestored && state.currentChapterIndex != activeChapterIndex) {
-                                scrollState.scrollTo(0)
-                                activeChapterIndex = state.currentChapterIndex
-                            }
-                        }
-
-                        LaunchedEffect(scrollState, isInitialRestored, state.currentChapterIndex) {
-                            if (isInitialRestored) {
-                                snapshotFlow { scrollState.value }
-                                    .distinctUntilChanged()
-                                    .debounce(300L)
-                                    .collect { position ->
-                                        val totalChapters = state.chapters.size
-                                        val progress = if (totalChapters > 0) {
-                                            ((state.currentChapterIndex + 1).toFloat() / totalChapters.toFloat()) * 100f
-                                        } else 0f
-
-                                        viewModel.saveProgress(
-                                            chapterIndex = state.currentChapterIndex,
-                                            position = position,
-                                            progress = progress
-                                        )
-                                    }
-                            }
-                        }
-
-                        Column(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .verticalScroll(scrollState)
-                                .padding(16.dp)
-                        ) {
-                            Text(
-                                text = state.chapters[state.currentChapterIndex].title,
-                                style = MaterialTheme.typography.headlineSmall,
-                                color = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.padding(bottom = 16.dp)
-                            )
-
-                            Text(
-                                text = state.currentChapterContent.ifBlank { "Đang tải nội dung..." },
-                                style = MaterialTheme.typography.bodyLarge.copy(
-                                    fontSize = fontSizeSp,
-                                    lineHeight = lineHeightSp,
-                                    color = textColor
-                                ),
-                                modifier = Modifier.fillMaxWidth()
-                            )
-
-                            Spacer(modifier = Modifier.height(32.dp))
-                        }
+                        // ⚡ Gọi ReaderContentView để hỗ trợ linh hoạt cả Chế độ Cuộn và Lật Trang
+                        ReaderContentView(
+                            content = state.currentChapterContent.ifBlank { "Đang tải nội dung..." },
+                            currentChapter = state.chapters[state.currentChapterIndex],
+                            hasPreviousChapter = state.currentChapterIndex > 0,
+                            hasNextChapter = state.currentChapterIndex < state.chapters.size - 1,
+                            settings = readerSettings,
+                            onNextChapter = { viewModel.nextChapter() },
+                            onPreviousChapter = { viewModel.previousChapter() },
+                            modifier = Modifier.fillMaxSize()
+                        )
                     }
                 }
             }

@@ -45,6 +45,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.tdpro1612.textstoryreader.settings.FontFamilyOption
+import com.tdpro1612.textstoryreader.settings.ReadMode
 import com.tdpro1612.textstoryreader.settings.ReaderThemePreset
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -87,7 +88,16 @@ fun SettingsScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp)
         ) {
-            // Section 1: Preset Themes
+            // Section 1: Read Mode
+            SettingsSectionHeader(title = "Chế độ hiển thị")
+            ReadModeSelector(
+                selectedMode = settings.readMode,
+                onModeSelect = { viewModel.updateReadMode(it) }
+            )
+
+            HorizontalDivider()
+
+            // Section 2: Preset Themes
             SettingsSectionHeader(title = "Giao diện trang đọc")
             ThemePresetSelector(
                 selectedPreset = settings.themePreset,
@@ -96,7 +106,7 @@ fun SettingsScreen(
 
             HorizontalDivider()
 
-            // Section 2: Font Settings
+            // Section 3: Font Settings
             SettingsSectionHeader(title = "Cấu hình Font chữ")
 
             // Slider Cỡ chữ
@@ -131,7 +141,7 @@ fun SettingsScreen(
 
             HorizontalDivider()
 
-            // Section 3: System Settings
+            // Section 4: System Settings
             SettingsSectionHeader(title = "Hệ thống")
             PreferenceSwitchItem(
                 title = "Giữ màn hình luôn sáng",
@@ -166,6 +176,34 @@ private fun SettingsSectionHeader(title: String) {
         color = MaterialTheme.colorScheme.primary,
         fontWeight = FontWeight.Bold
     )
+}
+
+@Composable
+private fun ReadModeSelector(
+    selectedMode: ReadMode,
+    onModeSelect: (ReadMode) -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        ReadMode.entries.forEach { mode ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onModeSelect(mode) }
+                    .padding(vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                RadioButton(
+                    selected = (mode == selectedMode),
+                    onClick = { onModeSelect(mode) }
+                )
+                Text(
+                    text = mode.displayName,
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(start = 8.dp)
+                )
+            }
+        }
+    }
 }
 
 @Composable
