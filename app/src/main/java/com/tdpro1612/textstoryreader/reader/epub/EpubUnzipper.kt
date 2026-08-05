@@ -11,7 +11,9 @@ import org.apache.commons.compress.archivers.zip.ZipFile
  */
 object EpubUnzipper {
 
-    private const val BUFFER_SIZE = 8192 // Buffer 8KB tối ưu I/O
+    private const val BUFFER_SIZE = 65536 // 64KB - tăng từ 8KB để giảm số vòng read/write
+    // syscall cho mỗi file nhỏ (chương truyện thường vài chục KB) khi số lượng file rất lớn
+    // (hàng nghìn file) - ít vòng lặp hơn thì tổng overhead I/O giảm đáng kể.
 
     /**
      * Giải nén toàn bộ tệp .epub vào một thư mục tạm trong cacheDir.
@@ -31,7 +33,7 @@ object EpubUnzipper {
         val tempZipFile = File(context.cacheDir, "temp_${folderName}.epub")
         context.contentResolver.openInputStream(uri)?.use { input ->
             FileOutputStream(tempZipFile).use { output ->
-                input.copyTo(output)
+                input.copyTo(output, bufferSize = BUFFER_SIZE)
             }
         } ?: throw IllegalArgumentException("Không thể mở InputStream từ Uri: $uri")
 
@@ -41,21 +43,48 @@ object EpubUnzipper {
                 val entries = zipFile.entries.toList()
 //                android.util.Log.d("EpubUnzip", "📦 Tổng số entry trong zip: ${entries.size}")
 
+                // SỬA #1: Tính canonicalPath của targetDir CHỈ 1 LẦN DUY NHẤT trước vòng lặp.
+                // Bản cũ gọi targetDir.canonicalPath() lại ở MỖI file - dù giá trị này không hề
+                // đổi suốt vòng lặp. canonicalPath() không phải phép tính chuỗi, nó chạm thẳng
+                // filesystem (resolve symlink + stat), nên gọi lặp lại là lãng phí thuần tuý.
+                val canonicalTargetDirPath = targetDir.canonicalPath
+
+                // SỬA #2: dedup mkdirs() - nhiều file (thường hàng nghìn chương) nằm chung
+                // 1-2 thư mục con (VD OEBPS/Text/), gọi mkdirs() lặp lại cho từng file là dư
+                // thừa. Theo dõi thư mục đã tạo trong phiên này để chỉ gọi đúng 1 lần/thư mục.
+                val createdDirs = HashSet<String>()
+
                 for (entry in entries) {
                     val currentEntryName = entry.name
                     try {
                         if (!entry.isDirectory && !currentEntryName.startsWith("__MACOSX")) {
                             val destFile = File(targetDir, currentEntryName)
-                            val canonicalDestPath = destFile.canonicalPath
-                            val canonicalTargetDirPath = targetDir.canonicalPath
-                            if (!canonicalDestPath.startsWith(canonicalTargetDirPath + File.separator)) {
+
+                            // SỬA #3: Kiểm tra Zip Slip KHÔNG chạm filesystem.
+                            // Bản cũ dùng destFile.canonicalPath() - phải resolve symlink +
+                            // stat thật trên đĩa cho MỖI file (6733 file = 6733 lần syscall).
+                            // Thay bằng Path.normalize(): chỉ xử lý CHUỖI thuần tuý (rút gọn
+                            // "..", ".") mà KHÔNG cần file tồn tại hay chạm đĩa - vẫn đủ an
+                            // toàn để chặn zip-slip vì tên entry độc hại luôn lộ ra qua các
+                            // thành phần ".." trong chuỗi, không cần biết nó có tồn tại thật
+                            // trên đĩa hay không.
+                            val normalizedDestPath = File(canonicalTargetDirPath, currentEntryName)
+                                .toPath()
+                                .normalize()
+                                .toString()
+
+                            if (!normalizedDestPath.startsWith(canonicalTargetDirPath + File.separator)) {
                                 throw SecurityException("Phát hiện file Zip Slip nguy hiểm: $currentEntryName")
                             }
-                            destFile.parentFile?.mkdirs()
+
+                            val parentDir = destFile.parentFile
+                            if (parentDir != null && createdDirs.add(parentDir.path)) {
+                                parentDir.mkdirs()
+                            }
 
                             zipFile.getInputStream(entry).use { input ->
-                                FileOutputStream(destFile).buffered().use { output ->
-                                    input.copyTo(output)
+                                FileOutputStream(destFile).buffered(BUFFER_SIZE).use { output ->
+                                    input.copyTo(output, bufferSize = BUFFER_SIZE)
                                 }
                             }
                         }
@@ -105,4 +134,5 @@ object EpubUnzipper {
             e.printStackTrace()
         }
     }
+
 }
