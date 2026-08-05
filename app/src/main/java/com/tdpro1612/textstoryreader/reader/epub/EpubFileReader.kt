@@ -196,19 +196,25 @@ class EpubFileReader(
         val tocCount = tocList.size
         val diff = abs(htmlCount - tocCount)
 
+        // ================== FAST-PATH ==================
+        // SỬA: trước đây nếu 1 vài file không tìm được title khớp trong TOC, file đó bị
+        // BỎ QUA HOÀN TOÀN (mất trắng chương, không fallback) miễn là "chapters.isNotEmpty()"
+        // vẫn true (vì các file khác vẫn khớp được). Giờ: chỉ chấp nhận Fast-Path nếu TẤT CẢ
+        // file đều khớp được title - hễ thiếu dù chỉ 1 file, huỷ Fast-Path và rơi xuống
+        // Deep-Scan (nơi luôn có fallback extractFirstLineTitle, không bao giờ mất file).
         if (htmlCount > 0 && tocCount > 0 && diff <= 10) {
-            Log.i(TAG, "🚀 [FAST-PATH ACTIVE] Số HTML ($htmlCount) và số TOC ($tocCount) tương đương. Lấy trực tiếp từ TOC!")
-
-            var fastIndex = 0
             val tocMapByFile = tocList.toMap()
+            val fastChapters = mutableListOf<BookChapter>()
+            var missingTitleCount = 0
+
             for (relativePath in htmlPathsInSpine) {
                 val cleanFileName = relativePath.substringAfterLast("/")
                 val title = tocMapByFile[cleanFileName] ?: tocMapByFile[relativePath]
 
                 if (!title.isNullOrBlank()) {
-                    chapters.add(
+                    fastChapters.add(
                         BookChapter(
-                            index = fastIndex++,
+                            index = fastChapters.size,
                             title = title,
                             path = relativePath,
                             path_next = "",
@@ -216,12 +222,32 @@ class EpubFileReader(
                             endCharOffset = -1
                         )
                     )
+                } else {
+                    missingTitleCount++
                 }
             }
-            if (chapters.isNotEmpty()) return chapters
-        } else {
-            Log.d(TAG, "🐢 [DEEP-SCAN ACTIVE] Phát hiện sách gộp/lệch lớn ($htmlCount file HTML vs $tocCount title TOC). Chuyển sang Deep-Scan!")
+
+            if (missingTitleCount == 0 && fastChapters.isNotEmpty()) {
+                Log.i(
+                    TAG,
+                    "🚀 [FAST-PATH ACTIVE] $htmlCount file HTML khớp đủ $tocCount title TOC, " +
+                            "không thiếu file nào. Lấy trực tiếp từ TOC!"
+                )
+                return fastChapters
+            } else if (missingTitleCount > 0) {
+                Log.w(
+                    TAG,
+                    "⚠️ [FAST-PATH HUỶ] Phát hiện $missingTitleCount/$htmlCount file không khớp " +
+                            "title TOC -> chuyển Deep-Scan để không mất chương."
+                )
+            }
         }
+        Log.d(
+            TAG,
+            "🐢 [DEEP-SCAN ACTIVE] Số HTML ($htmlCount) và số TOC ($tocCount) lệch lớn hoặc " +
+                    "Fast-Path vừa bị huỷ. Chuyển sang Deep-Scan!"
+        )
+        // ================== HẾT FAST-PATH ==================
 
         val tocFileMap = mutableMapOf<String, String>()
         for ((src, title) in tocList) {
@@ -231,21 +257,24 @@ class EpubFileReader(
             }
         }
 
-        // 🟢 DEEP SCAN CHẠY ĐA LUỒNG TRÊN DISPATCHERS.DEFAULT
+        // 🟢 DEEP SCAN CHẠY ĐA LUỒNG
+        // SỬA: dùng Dispatchers.IO thay vì Dispatchers.Default - vì công việc trong mỗi task
+        // chủ yếu là readTextFile() (I/O đọc đĩa, blocking), không phải tính toán CPU-bound.
+        // Dispatchers.Default có số luồng giới hạn theo số core CPU, dùng cho việc chờ I/O sẽ
+        // chiếm mất luồng cần cho công việc CPU-bound thật sự khác trong app. Dispatchers.IO
+        // có pool luồng lớn hơn, thiết kế đúng cho khối lượng lớn tác vụ I/O chạy song song.
         val loopTime = measureTimeMillis {
-            val isFastPathActive = htmlCount > 0 && tocCount > 0 && diff <= 10
-
             val rawExtractedList = coroutineScope {
                 htmlPathsInSpine.mapIndexed { i, relativePath ->
-                    async(Dispatchers.Default) {
+                    async(Dispatchers.IO) {
                         val fullHtml = readTextFile(relativePath)
                         if (fullHtml.isBlank()) {
                             emptyList()
                         } else {
                             val nextRelativePath = if (i < htmlPathsInSpine.size - 1) htmlPathsInSpine[i + 1] else ""
 
-                            val tagMatches = if (isFastPathActive) emptyList() else fastFindTagMatches(fullHtml)
-                            val nextTagMatches = if (!isFastPathActive && nextRelativePath.isNotBlank()) {
+                            val tagMatches = fastFindTagMatches(fullHtml)
+                            val nextTagMatches = if (nextRelativePath.isNotBlank()) {
                                 val nextHtml = readTextFile(nextRelativePath)
                                 if (nextHtml.isNotBlank()) fastFindTagMatches(nextHtml) else null
                             } else null
@@ -256,8 +285,7 @@ class EpubFileReader(
                                 fullHtml = fullHtml,
                                 tagMatches = tagMatches,
                                 nextFileTagMatches = nextTagMatches,
-                                tocMap = tocFileMap,
-                                isFastPath = isFastPathActive
+                                tocMap = tocFileMap
                             )
                         }
                     }
@@ -288,25 +316,10 @@ class EpubFileReader(
         fullHtml: String,
         tagMatches: List<Triple<String, String, Int>>,
         nextFileTagMatches: List<Triple<String, String, Int>>?,
-        tocMap: Map<String, String>,
-        isFastPath: Boolean = false
+        tocMap: Map<String, String>
     ): List<BookChapter> {
         val cleanFileName = relativePath.substringAfterLast("/")
         val titleFromToc = tocMap[cleanFileName] ?: tocMap[relativePath]
-
-        // 🚀 LỐI TẮT BỎ QUA SOI THẺ HTML NẾU ĐÃ CÓ TITLE VÀ ĐANG CHẠY FAST-PATH
-        if (isFastPath && titleFromToc != null) {
-            return listOf(
-                BookChapter(
-                    index = 0,
-                    title = titleFromToc,
-                    path = relativePath,
-                    path_next = "",
-                    startCharOffset = 0,
-                    endCharOffset = -1
-                )
-            )
-        }
 
         val result = mutableListOf<BookChapter>()
         val rawNodes = mutableListOf<Pair<String, Int>>()
@@ -333,7 +346,11 @@ class EpubFileReader(
             }
         }
 
-        if (tocLinkCount > 5 && rawNodes.size < 2) {
+        // SỬA: chỉ coi cả file là "trang mục lục rác" và trả về rỗng khi KHÔNG có title dự
+        // phòng từ TOC. Nếu titleFromToc đã có sẵn (đáng tin cậy từ NCX), dù file này lỡ chứa
+        // nhiều link điều hướng (>5) thì vẫn có thể fallback về titleFromToc ở nhánh cuối hàm -
+        // trả về rỗng ngay tại đây sẽ xoá luôn cơ hội đó một cách oan uổng.
+        if (tocLinkCount > 5 && rawNodes.size < 2 && titleFromToc == null) {
             return emptyList()
         }
 
