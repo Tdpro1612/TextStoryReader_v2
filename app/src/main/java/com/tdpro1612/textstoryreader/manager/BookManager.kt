@@ -112,6 +112,9 @@ class BookManager(private val context: Context) {
             }
         }
 
+        // 🛡️ ĐIỂM CHẶN DUY NHẤT: Đảm bảo dung lượng cache an toàn trước khi giải nén/mở sách mới
+        BookCacheManager.ensureCacheSpace(context)
+
         // 2. Nếu DB chưa có -> Parse qua Reader
         Log.d("BookManager", "🐢 [CACHE MISS] Parse trực tiếp từ file qua Reader cho bookId = $bookId")
         val reader = ReaderFactory.getReader(bookUri)
@@ -140,7 +143,16 @@ class BookManager(private val context: Context) {
     }
 
     suspend fun getChapterContent(bookUri: Uri, chapter: BookChapter): String {
+        // 🛡️ ĐIỂM CHẶN DUY NHẤT: Kiểm tra trần dung lượng trước khi nạp nội dung chương
+        BookCacheManager.ensureCacheSpace(context)
+
         val reader = ReaderFactory.getReader(bookUri)
         return reader.getChapterContent(context, bookUri, chapter)
+    }
+
+    // Xóa cache riêng cho từng cuốn sách
+    fun clearCache(bookUri: Uri) {
+        val reader = ReaderFactory.getReader(bookUri)
+        reader.clearCache(context, bookUri)
     }
 }

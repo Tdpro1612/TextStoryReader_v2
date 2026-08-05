@@ -13,4 +13,9 @@ interface BookContentReader {
      * Lấy nội dung văn bản của một chương cụ thể
      */
     suspend fun getChapterContent(context: Context, uri: Uri, chapter: BookChapter): String
+
+    /**
+     * thêm logic xử lý cache
+     */
+    fun clearCache(context: Context, uri: Uri)
 }
