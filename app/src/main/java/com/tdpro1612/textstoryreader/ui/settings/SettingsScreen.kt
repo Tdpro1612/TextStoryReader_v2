@@ -13,17 +13,22 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
@@ -59,6 +64,15 @@ fun SettingsScreen(
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "Quay lại"
+                        )
+                    }
+                },
+                actions = {
+                    // Nút Reset nhanh trên thanh tiêu đề
+                    IconButton(onClick = { viewModel.resetToDefault() }) {
+                        Icon(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = "Khôi phục mặc định"
                         )
                     }
                 }
@@ -108,6 +122,13 @@ fun SettingsScreen(
                 )
             }
 
+            // Kiểu chữ
+            Text(text = "Kiểu chữ", style = MaterialTheme.typography.bodyLarge)
+            FontFamilySelector(
+                selectedFont = settings.fontFamily,
+                onFontSelect = { viewModel.updateFontFamily(it) }
+            )
+
             HorizontalDivider()
 
             // Section 3: System Settings
@@ -118,6 +139,21 @@ fun SettingsScreen(
                 checked = settings.keepScreenOn,
                 onCheckedChange = { viewModel.updateKeepScreenOn(it) }
             )
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // Nút Khôi phục mặc định ở dưới cùng
+            OutlinedButton(
+                onClick = { viewModel.resetToDefault() },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Refresh,
+                    contentDescription = null,
+                    modifier = Modifier.padding(end = 8.dp)
+                )
+                Text(text = "Đặt lại cài đặt mặc định")
+            }
         }
     }
 }
@@ -137,11 +173,11 @@ private fun ThemePresetSelector(
     selectedPreset: ReaderThemePreset,
     onPresetSelect: (ReaderThemePreset) -> Unit
 ) {
-    Row(
+    LazyRow(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween
+        horizontalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        ReaderThemePreset.entries.forEach { preset ->
+        items(ReaderThemePreset.entries) { preset ->
             val isSelected = preset == selectedPreset
             val bgColor = Color(preset.backgroundColorHex)
             val textColor = Color(preset.textColorHex)
@@ -157,7 +193,7 @@ private fun ThemePresetSelector(
                         .background(bgColor)
                         .border(
                             width = if (isSelected) 3.dp else 1.dp,
-                            color = if (isSelected) MaterialTheme.colorScheme.primary else Color.Gray.copy(alpha = 0.5f),
+                            color = if (isSelected) MaterialTheme.colorScheme.primary else Color.Gray.copy(alpha = 0.4f),
                             shape = CircleShape
                         ),
                     contentAlignment = Alignment.Center
@@ -181,6 +217,34 @@ private fun ThemePresetSelector(
                 Text(
                     text = preset.displayName,
                     style = MaterialTheme.typography.labelSmall
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun FontFamilySelector(
+    selectedFont: FontFamilyOption,
+    onFontSelect: (FontFamilyOption) -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        FontFamilyOption.entries.forEach { option ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onFontSelect(option) }
+                    .padding(vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                RadioButton(
+                    selected = (option == selectedFont),
+                    onClick = { onFontSelect(option) }
+                )
+                Text(
+                    text = option.displayName,
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(start = 8.dp)
                 )
             }
         }
