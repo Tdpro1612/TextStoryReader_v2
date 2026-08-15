@@ -45,7 +45,7 @@ class BookManager(private val context: Context) {
 
     // --- 1. Quản lý Thư viện Phân trang theo Page Index (Limit / Offset) ---
     suspend fun getBooksPaged(limit: Int, offset: Int): List<BookEntity> {
-        return bookQueries.getBooksPaged(limit, offset)
+        return bookQueries.getBooksPagedAZ(limit, offset)
     }
 
     suspend fun searchBooksPaged(query: String, limit: Int, offset: Int): List<BookEntity> {
