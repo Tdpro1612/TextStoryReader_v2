@@ -3,6 +3,8 @@ package com.tdpro1612.textstoryreader.manager
 import android.content.Context
 import android.net.Uri
 import android.util.Log
+import androidx.documentfile.provider.DocumentFile
+import android.provider.DocumentsContract
 import com.tdpro1612.textstoryreader.database.AppDatabase
 import com.tdpro1612.textstoryreader.database.BookEntity
 import com.tdpro1612.textstoryreader.database.BookmarkEntity
@@ -157,5 +159,59 @@ class BookManager(private val context: Context) {
     fun clearCache(bookUri: Uri) {
         val reader = ReaderFactory.getReader(bookUri)
         reader.clearCache(context, bookUri)
+    }
+
+    // Thêm vào trong class BookManager
+    suspend fun deleteBook(book: BookEntity, deletePhysicalFile: Boolean = true) {
+        // 1. Xóa FILE VẬT LÝ trên đĩa
+        if (deletePhysicalFile) {
+            val isDeleted = deleteFileFromStorage(context, book.filePath)
+            if (isDeleted) {
+                Log.d("BookManager", "🗑️ ĐÃ XÓA FILE VẬT LÝ THÀNH CÔNG: ${book.filePath}")
+            } else {
+                Log.e("BookManager", "❌ XÓA FILE VẬT LÝ THẤT BẠI: ${book.filePath}")
+            }
+        }
+
+        // 2. Xóa dữ liệu trong Room DB dựa theo id
+        bookQueries.deleteBook(book)
+        bookQueries.deleteChaptersByBookId(book.id)
+        bookQueries.deleteAllBookmarksOfBook(book.id)
+    }
+
+    /**
+     * Hàm hỗ trợ xóa file vật lý "cân" mọi loại đường dẫn
+     */
+    private fun deleteFileFromStorage(context: Context, filePath: String): Boolean {
+        return try {
+            if (filePath.startsWith("content://")) {
+                val uri = Uri.parse(filePath)
+
+                // Cách 1: Dùng DocumentsContract xóa trực tiếp qua SAF (Độ tin cậy cao nhất)
+                val isDeleted = try {
+                    DocumentsContract.deleteDocument(context.contentResolver, uri)
+                } catch (e: Exception) {
+                    false
+                }
+
+                if (isDeleted) return true
+
+                // Cách 2: Fallback qua DocumentFile nếu cách 1 trượt
+                val documentFile = DocumentFile.fromSingleUri(context, uri)
+                return documentFile?.delete() == true
+
+            } else {
+                // Trường hợp đường dẫn File đĩa (/storage/emulated/0/...)
+                val file = java.io.File(filePath)
+                if (file.exists()) {
+                    file.delete()
+                } else {
+                    false
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("BookManager", "Ngoại lệ khi xóa file vật lý: ${e.message}", e)
+            false
+        }
     }
 }
