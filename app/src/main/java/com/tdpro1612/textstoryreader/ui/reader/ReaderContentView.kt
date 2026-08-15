@@ -2,6 +2,7 @@ package com.tdpro1612.textstoryreader.ui.reader
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -17,12 +18,18 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.tdpro1612.textstoryreader.reader.BookChapter
@@ -34,11 +41,13 @@ import com.tdpro1612.textstoryreader.settings.toComposeFontFamily
 fun ReaderContentView(
     content: String,
     currentChapter: BookChapter,
+    readProgress: Float, // 👈 Cập nhật dùng tiến độ % (0.0f -> 1.0f)
     hasPreviousChapter: Boolean,
     hasNextChapter: Boolean,
     settings: ReaderSettings,
     onNextChapter: () -> Unit,
     onPreviousChapter: () -> Unit,
+    onProgressChanged: (Float) -> Unit, // 👈 Callback gửi % tiến độ mới về
     modifier: Modifier = Modifier
 ) {
     val bgColor = Color(settings.themePreset.backgroundColorHex)
@@ -60,22 +69,26 @@ fun ReaderContentView(
                 ScrollReaderView(
                     content = content,
                     chapterTitle = currentChapter.title,
+                    readProgress = readProgress,
                     textStyle = textStyle,
                     hasPreviousChapter = hasPreviousChapter,
                     hasNextChapter = hasNextChapter,
                     onNextChapter = onNextChapter,
-                    onPreviousChapter = onPreviousChapter
+                    onPreviousChapter = onPreviousChapter,
+                    onProgressChanged = onProgressChanged
                 )
             }
             ReadMode.PAGE_FLIP -> {
                 PageFlipReaderView(
-                    content = content,
                     chapterTitle = currentChapter.title,
+                    content = content,
+                    readProgress = readProgress,
                     textStyle = textStyle,
                     hasPreviousChapter = hasPreviousChapter,
                     hasNextChapter = hasNextChapter,
                     onNextChapter = onNextChapter,
-                    onPreviousChapter = onPreviousChapter
+                    onPreviousChapter = onPreviousChapter,
+                    onProgressChanged = onProgressChanged
                 )
             }
         }
@@ -86,25 +99,31 @@ fun ReaderContentView(
 private fun ScrollReaderView(
     content: String,
     chapterTitle: String,
+    readProgress: Float,
     textStyle: TextStyle,
     hasPreviousChapter: Boolean,
     hasNextChapter: Boolean,
     onNextChapter: () -> Unit,
-    onPreviousChapter: () -> Unit
+    onPreviousChapter: () -> Unit,
+    onProgressChanged: (Float) -> Unit
 ) {
     val scrollState = rememberScrollState()
 
-    // ⚡ Reset cuộn lên đầu trang mỗi khi đổi chương
-    LaunchedEffect(chapterTitle) {
-        scrollState.scrollTo(0)
+    // Quy đổi % tiến độ sang giá trị Pixel cuộn khi layout render xong
+    LaunchedEffect(scrollState.maxValue, chapterTitle) {
+        if (scrollState.maxValue > 0) {
+            val targetPixel = (scrollState.maxValue * readProgress).toInt()
+            scrollState.scrollTo(targetPixel)
+        }
     }
 
-    // Bắt sự kiện cuộn xuống đáy / lên đỉnh
+    // Lắng nghe hành vi cuộn để tính % tiến độ mới
     LaunchedEffect(scrollState) {
-        snapshotFlow { scrollState.value to scrollState.maxValue }
-            .collect { (current, max) ->
-                if (max > 0 && current >= max) {
-                    // Cuộn tới cuối chương
+        snapshotFlow { scrollState.value }
+            .collect { currentPx ->
+                if (scrollState.maxValue > 0) {
+                    val progress = currentPx.toFloat() / scrollState.maxValue.toFloat()
+                    onProgressChanged(progress.coerceIn(0f, 1f))
                 }
             }
     }
@@ -115,7 +134,6 @@ private fun ScrollReaderView(
             .verticalScroll(scrollState)
             .padding(16.dp)
     ) {
-        // Nút chuyển chương trước ở đầu nếu có
         if (hasPreviousChapter) {
             OutlinedButton(
                 onClick = onPreviousChapter,
@@ -139,7 +157,6 @@ private fun ScrollReaderView(
 
         Spacer(modifier = Modifier.height(24.dp))
 
-        // Card chuyển chương ở cuối
         Column(
             modifier = Modifier.fillMaxWidth(),
             horizontalAlignment = Alignment.CenterHorizontally
@@ -164,83 +181,132 @@ private fun ScrollReaderView(
 
 @Composable
 private fun PageFlipReaderView(
-    content: String,
     chapterTitle: String,
+    content: String,
+    readProgress: Float,
     textStyle: TextStyle,
     hasPreviousChapter: Boolean,
     hasNextChapter: Boolean,
     onNextChapter: () -> Unit,
-    onPreviousChapter: () -> Unit
+    onPreviousChapter: () -> Unit,
+    onProgressChanged: (Float) -> Unit
 ) {
-    // Tách nội dung chương thành các đoạn trang
-    val pages = rememberPages(content, chapterTitle)
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        val density = LocalDensity.current
+        val textMeasurer = rememberTextMeasurer()
 
-    // Tổng số trang = [Thẻ Trang Trước] (nếu có) + [Các trang nội dung] + [Thẻ Trang Sau] (nếu có)
-    val totalPages = pages.size + (if (hasPreviousChapter) 1 else 0) + (if (hasNextChapter) 1 else 0)
-    val pagerState = rememberPagerState(initialPage = if (hasPreviousChapter) 1 else 0, pageCount = { totalPages })
+        val horizontalPaddingPx = with(density) { 32.dp.toPx() }
+        val verticalPaddingPx = with(density) { 30.dp.toPx() }
 
-    // ⚡ RESET TRANG VỀ ĐẦU CHƯƠNG MỚI: Tránh văng/lặp chương do lệch chỉ số trang giữa các chương
-    LaunchedEffect(chapterTitle) {
-        val startPage = if (hasPreviousChapter) 1 else 0
-        pagerState.scrollToPage(startPage)
-    }
+        val maxAvailableWidth = (maxWidth.value * density.density - horizontalPaddingPx).coerceAtLeast(100f)
+        val maxAvailableHeight = (maxHeight.value * density.density - verticalPaddingPx).coerceAtLeast(100f)
 
-    // Tự động lật sang chương mới / chương cũ khi chạm trang đầu/cuối
-    LaunchedEffect(pagerState.currentPage) {
-        if (hasPreviousChapter && pagerState.currentPage == 0) {
-            onPreviousChapter()
-        } else if (hasNextChapter && pagerState.currentPage == totalPages - 1) {
-            onNextChapter()
+        val pages = remember(content, chapterTitle, textStyle, maxAvailableWidth, maxAvailableHeight) {
+            paginateText(
+                chapterTitle = chapterTitle,
+                content = content,
+                textStyle = textStyle,
+                widthPx = maxAvailableWidth.toInt(),
+                heightPx = maxAvailableHeight.toInt(),
+                textMeasurer = textMeasurer
+            )
         }
-    }
 
-    HorizontalPager(
-        state = pagerState,
-        modifier = Modifier.fillMaxSize()
-    ) { pageIndex ->
-        val effectiveContentIndex = pageIndex - (if (hasPreviousChapter) 1 else 0)
+        val totalContentPages = pages.size
+        val offset = if (hasPreviousChapter) 1 else 0
+        val totalPages = totalContentPages + offset + (if (hasNextChapter) 1 else 0)
 
-        when {
-            // Trang đệm quay lại chương trước
-            hasPreviousChapter && pageIndex == 0 -> {
-                Box(
-                    modifier = Modifier.fillMaxSize().padding(24.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    OutlinedButton(onClick = onPreviousChapter) {
-                        Text("◄ Vuốt hoặc bấm để về Chương trước")
+        // Quy đổi từ % tiến độ sang chỉ số trang tương ứng
+        val initialPage = remember(readProgress, totalContentPages) {
+            if (totalContentPages > 0) {
+                val calculatedContentIndex = ((totalContentPages - 1) * readProgress).toInt()
+                (calculatedContentIndex + offset).coerceIn(0, (totalPages - 1).coerceAtLeast(0))
+            } else 0
+        }
+
+        val pagerState = rememberPagerState(initialPage = initialPage, pageCount = { totalPages })
+
+        // Nhảy đến trang tương ứng nếu đổi chapter
+        LaunchedEffect(chapterTitle) {
+            pagerState.scrollToPage(initialPage)
+        }
+
+        // Lắng nghe chuyển trang để tính % tiến độ mới gửi về ViewModel
+        LaunchedEffect(pagerState) {
+            snapshotFlow { pagerState.currentPage }
+                .collect { page ->
+                    val effectivePage = page - offset
+                    if (effectivePage in pages.indices) {
+                        val progress = if (totalContentPages > 1) {
+                            effectivePage.toFloat() / (totalContentPages - 1).toFloat()
+                        } else 0f
+                        onProgressChanged(progress.coerceIn(0f, 1f))
                     }
                 }
+        }
+
+        LaunchedEffect(pagerState.currentPage) {
+            if (hasPreviousChapter && pagerState.currentPage == 0) {
+                onPreviousChapter()
+            } else if (hasNextChapter && pagerState.currentPage == totalPages - 1) {
+                onNextChapter()
             }
-            // Trang đệm chuyển sang chương tiếp theo
-            hasNextChapter && pageIndex == totalPages - 1 -> {
-                Box(
-                    modifier = Modifier.fillMaxSize().padding(24.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Button(onClick = onNextChapter) {
-                        Text("Vuốt hoặc bấm để sang Chương tiếp ►")
+        }
+
+        HorizontalPager(
+            state = pagerState,
+            modifier = Modifier.fillMaxSize()
+        ) { pageIndex ->
+            val effectiveContentIndex = pageIndex - offset
+
+            when {
+                hasPreviousChapter && pageIndex == 0 -> {
+                    Box(
+                        modifier = Modifier.fillMaxSize().padding(24.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        OutlinedButton(onClick = onPreviousChapter) {
+                            Text("◄ Vuốt hoặc bấm để về Chương trước")
+                        }
                     }
                 }
-            }
-            // Trang nội dung
-            else -> {
-                val pageText = pages.getOrNull(effectiveContentIndex) ?: ""
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(horizontal = 20.dp, vertical = 16.dp)
-                ) {
-                    Text(
-                        text = pageText,
-                        style = textStyle,
-                        modifier = Modifier.weight(1f)
-                    )
-                    Text(
-                        text = "${effectiveContentIndex + 1} / ${pages.size}",
-                        style = textStyle.copy(fontSize = 12.sp),
-                        modifier = Modifier.align(Alignment.CenterHorizontally)
-                    )
+                hasNextChapter && pageIndex == totalPages - 1 -> {
+                    Box(
+                        modifier = Modifier.fillMaxSize().padding(24.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Button(onClick = onNextChapter) {
+                            Text("Vuốt hoặc bấm để sang Chương tiếp ►")
+                        }
+                    }
+                }
+                else -> {
+                    val pageText = pages.getOrNull(effectiveContentIndex) ?: buildAnnotatedString { }
+
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(start = 16.dp, end = 16.dp, top = 0.dp, bottom = 2.dp)
+                    ) {
+                        Text(
+                            text = pageText,
+                            style = textStyle,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .align(Alignment.TopStart)
+                        )
+
+                        Text(
+                            text = "${effectiveContentIndex + 1} / ${pages.size}",
+                            style = textStyle.copy(
+                                fontSize = 10.sp,
+                                color = textStyle.color.copy(alpha = 0.5f)
+                            ),
+                            modifier = Modifier
+                                .align(Alignment.BottomEnd)
+                                .padding(end = 2.dp, bottom = 0.dp)
+                        )
+                    }
                 }
             }
         }
@@ -248,13 +314,98 @@ private fun PageFlipReaderView(
 }
 
 /**
- * Hàm phân chia text thành các đoạn nhỏ trang lật
+ * Hàm phân trang tính toán chính xác tuyệt đối, bổ sung In Đậm Title ở Trang 1
  */
-private fun rememberPages(content: String, title: String): List<String> {
-    if (content.isEmpty()) return listOf(title)
+private fun paginateText(
+    chapterTitle: String,
+    content: String,
+    textStyle: TextStyle,
+    widthPx: Int,
+    heightPx: Int,
+    textMeasurer: androidx.compose.ui.text.TextMeasurer
+): List<AnnotatedString> {
+    if (content.isBlank() && chapterTitle.isBlank()) return listOf(buildAnnotatedString { })
 
-    // Phân đoạn theo chuỗi dài ~800 ký tự cho mỗi trang
-    val chunkSize = 800
-    val chunks = content.chunked(chunkSize)
-    return listOf("$title\n\n${chunks.firstOrNull() ?: ""}") + chunks.drop(1)
+    val pages = mutableListOf<AnnotatedString>()
+
+    val titleStyle = textStyle.copy(
+        fontWeight = FontWeight.Bold,
+        fontSize = (textStyle.fontSize.value + 3).sp
+    )
+
+    var isFirstPage = true
+    var remainingText = content
+
+    while (remainingText.isNotEmpty() || isFirstPage) {
+        val currentAnnotatedText = buildAnnotatedString {
+            if (isFirstPage && chapterTitle.isNotBlank()) {
+                pushStyle(titleStyle.toSpanStyle())
+                append(chapterTitle)
+                pop()
+                append("\n\n")
+            }
+            pushStyle(textStyle.toSpanStyle())
+            append(remainingText)
+            pop()
+        }
+
+        val result = textMeasurer.measure(
+            text = currentAnnotatedText,
+            style = textStyle,
+            constraints = Constraints(maxWidth = widthPx)
+        )
+
+        if (result.size.height <= heightPx) {
+            pages.add(currentAnnotatedText)
+            break
+        }
+
+        var lineIndex = result.lineCount - 1
+        while (lineIndex > 0 && result.getLineBottom(lineIndex) > heightPx) {
+            lineIndex--
+        }
+
+        if (lineIndex <= 0) {
+            val cutIndex = (remainingText.length / 2).coerceAtLeast(1)
+            pages.add(buildAnnotatedString { append(remainingText.substring(0, cutIndex)) })
+            remainingText = remainingText.substring(cutIndex)
+            isFirstPage = false
+            continue
+        }
+
+        val visibleEndOffset = result.getLineEnd(lineIndex)
+
+        val titleLengthOffset = if (isFirstPage && chapterTitle.isNotBlank()) chapterTitle.length + 2 else 0
+        val actualEndOffset = (visibleEndOffset - titleLengthOffset).coerceIn(0, remainingText.length)
+
+        var breakOffset = actualEndOffset
+
+        for (i in actualEndOffset downTo (actualEndOffset - 50).coerceAtLeast(0)) {
+            if (i < remainingText.length && (remainingText[i] == '\n' || remainingText[i] == ' ')) {
+                breakOffset = i + 1
+                break
+            }
+        }
+
+        if (breakOffset <= 0) breakOffset = actualEndOffset.coerceAtLeast(1)
+
+        val pageContentStr = remainingText.substring(0, breakOffset).trimEnd()
+
+        pages.add(buildAnnotatedString {
+            if (isFirstPage && chapterTitle.isNotBlank()) {
+                pushStyle(titleStyle.toSpanStyle())
+                append(chapterTitle)
+                pop()
+                append("\n\n")
+            }
+            pushStyle(textStyle.toSpanStyle())
+            append(pageContentStr)
+            pop()
+        })
+
+        remainingText = remainingText.substring(breakOffset).trimStart()
+        isFirstPage = false
+    }
+
+    return if (pages.isEmpty()) listOf(buildAnnotatedString { append(chapterTitle) }) else pages
 }

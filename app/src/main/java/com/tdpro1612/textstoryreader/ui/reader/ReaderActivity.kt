@@ -293,15 +293,19 @@ fun ReaderScreen(
                         }
                     }
                     is ReaderUiState.Success -> {
-                        // ⚡ Gọi ReaderContentView để hỗ trợ linh hoạt cả Chế độ Cuộn và Lật Trang
+                        // ⚡ Gọi ReaderContentView với tiến độ readProgress đồng bộ chuẩn
                         ReaderContentView(
                             content = state.currentChapterContent.ifBlank { "Đang tải nội dung..." },
                             currentChapter = state.chapters[state.currentChapterIndex],
+                            readProgress = state.readProgress,
                             hasPreviousChapter = state.currentChapterIndex > 0,
                             hasNextChapter = state.currentChapterIndex < state.chapters.size - 1,
                             settings = readerSettings,
                             onNextChapter = { viewModel.nextChapter() },
                             onPreviousChapter = { viewModel.previousChapter() },
+                            onProgressChanged = { newProgress ->
+                                viewModel.onProgressChanged(newProgress)
+                            },
                             modifier = Modifier.fillMaxSize()
                         )
                     }

@@ -22,6 +22,8 @@ sealed class ReaderUiState {
         val book: BookEntity,
         val chapters: List<BookChapter>,
         val currentChapterIndex: Int,
+        val lastPosition: Int,          // Dùng cho chế độ Lật trang (chỉ số trang)
+        val readProgress: Float,        // Tiến độ % trong toàn cuốn sách/chương dùng chung
         val currentChapterContent: String
     ) : ReaderUiState()
     data class Error(val message: String) : ReaderUiState()
@@ -41,6 +43,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     var currentChapterIndex: Int = 0
         private set
     private var currentPosition: Int = 0
+    private var currentReadProgress: Float = 0f
 
     fun loadBook(bookId: Int) {
         viewModelScope.launch {
@@ -56,9 +59,10 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 }
 
                 currentBook = book
-                // Gán đúng chương cũ và vị trí cũ từ DB
+                // Lấy chương, vị trí và % tiến độ cũ từ DB
                 currentChapterIndex = book.lastChapterIndex
                 currentPosition = book.lastPosition
+                currentReadProgress = book.readProgress
 
                 val bookUri = Uri.parse(book.filePath)
 
@@ -91,6 +95,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 if (currentChapterIndex !in chaptersList.indices) {
                     currentChapterIndex = 0
                     currentPosition = 0
+                    currentReadProgress = 0f
                 }
 
                 // ⏱️ 2. Đo thời gian lấy Nội dung chương hiện tại
@@ -100,12 +105,14 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 }
                 Log.d("ReaderPerf", "2. Đã đọc xong text chương ${currentChapterIndex}: ${System.currentTimeMillis() - t2} ms")
 
-                // ⏱️ 3. Đo thời gian Render/Đẩy sang UI State
+                // ⏱️ 3. Đẩy dữ liệu sang UI State
                 val t3 = System.currentTimeMillis()
                 _uiState.value = ReaderUiState.Success(
                     book = book,
                     chapters = chaptersList,
                     currentChapterIndex = currentChapterIndex,
+                    lastPosition = currentPosition,
+                    readProgress = currentReadProgress,
                     currentChapterContent = content
                 )
                 Log.d("ReaderPerf", "3. Đã đẩy dữ liệu ra UI State: ${System.currentTimeMillis() - t3} ms")
@@ -126,13 +133,16 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 if (currentState is ReaderUiState.Success) {
                     _uiState.value = currentState.copy(
                         currentChapterIndex = chapterIndex,
+                        lastPosition = 0,
+                        readProgress = 0f,
                         currentChapterContent = "Đang tải nội dung..."
                     )
                 }
 
                 val bookUri = Uri.parse(book.filePath)
                 currentChapterIndex = chapterIndex
-                currentPosition = 0 // Chuyển chương mới -> Reset vị trí cuộn về 0
+                currentPosition = 0
+                currentReadProgress = 0f
 
                 // ⏱️ Đo thời gian đọc nội dung khi chuyển chương
                 val t2 = System.currentTimeMillis()
@@ -141,12 +151,10 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 }
                 Log.d("ReaderPerf", "2. [Chuyển chương $chapterIndex] Đã đọc xong text: ${System.currentTimeMillis() - t2} ms")
 
-                val progress = ((chapterIndex + 1).toFloat() / chaptersList.size.toFloat()) * 100f
-
                 saveProgress(
                     chapterIndex = chapterIndex,
                     position = 0,
-                    progress = progress
+                    progress = 0f
                 )
 
                 val t3 = System.currentTimeMillis()
@@ -154,6 +162,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                     book = book,
                     chapters = chaptersList,
                     currentChapterIndex = chapterIndex,
+                    lastPosition = 0,
+                    readProgress = 0f,
                     currentChapterContent = content
                 )
                 Log.d("ReaderPerf", "3. [Chuyển chương $chapterIndex] Đã đẩy dữ liệu ra UI State: ${System.currentTimeMillis() - t3} ms")
@@ -189,6 +199,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
                 currentChapterIndex = 0
                 currentPosition = 0
+                currentReadProgress = 0f
 
                 val t2 = System.currentTimeMillis()
                 val content = withContext(Dispatchers.IO) {
@@ -201,6 +212,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                     book = book,
                     chapters = chaptersList,
                     currentChapterIndex = currentChapterIndex,
+                    lastPosition = currentPosition,
+                    readProgress = currentReadProgress,
                     currentChapterContent = content
                 )
                 Log.d("ReaderPerf", "3. [Reload] Đã đẩy dữ liệu ra UI State: ${System.currentTimeMillis() - t3} ms")
@@ -223,10 +236,28 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    /**
+     * Lắng nghe cập nhật tiến độ đọc dưới dạng % (0.0f - 1.0f) và vị trí trang/dòng
+     */
+    fun onProgressChanged(newProgress: Float, newPosition: Int = currentPosition) {
+        val clampedProgress = newProgress.coerceIn(0f, 1f)
+        if (this.currentReadProgress == clampedProgress && this.currentPosition == newPosition) return
+
+        this.currentReadProgress = clampedProgress
+        this.currentPosition = newPosition
+
+        saveProgress(
+            chapterIndex = currentChapterIndex,
+            position = newPosition,
+            progress = clampedProgress
+        )
+    }
+
     fun saveProgress(chapterIndex: Int, position: Int, progress: Float) {
         val book = currentBook ?: return
         this.currentChapterIndex = chapterIndex
         this.currentPosition = position
+        this.currentReadProgress = progress
 
         viewModelScope.launch(Dispatchers.IO) {
             bookManager.updateReadingProgress(
@@ -243,20 +274,14 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         val book = currentBook ?: return
 
         viewModelScope.launch(Dispatchers.IO) {
-            // 1. Lưu tiến độ đọc cuối cùng
             if (chaptersList.isNotEmpty()) {
-                val progress = ((currentChapterIndex + 1).toFloat() / chaptersList.size.toFloat()) * 100f
                 bookManager.updateReadingProgress(
                     bookId = book.id,
                     chapterIndex = currentChapterIndex,
                     position = currentPosition,
-                    progress = progress
+                    progress = currentReadProgress
                 )
             }
-
-            // 2. Dọn dẹp cache của cuốn sách hiện tại thông qua BookManager
-//            val bookUri = Uri.parse(book.filePath)
-//            bookManager.clearCache(bookUri)
         }
     }
 }

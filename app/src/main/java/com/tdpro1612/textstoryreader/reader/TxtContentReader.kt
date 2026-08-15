@@ -6,108 +6,150 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.BufferedReader
 import java.io.InputStreamReader
-import java.nio.charset.Charset
 import java.nio.charset.StandardCharsets
-import java.util.regex.Pattern
 
 class TxtContentReader : BookContentReader {
 
-    private val chapterPattern = Pattern.compile(
-        "^(Chương|Thứ|Chapter|Hồi|Quyển|Tiết|Bài|Phần)\\s+\\d+.*$|^\\d+[\\.:\\-].*$",
-        Pattern.CASE_INSENSITIVE or Pattern.MULTILINE
+    // 🔥 Regex linh hoạt: Khớp cả "Chương 1", "Chương : 1", "Chương:1", "Chương - 1"
+    private val chapterPatterns = listOf(
+        Regex("""(?i)^\s*(Chương|Chapter|Quyển|Tập|Hồi|Bài|Phần)\s*[:\-]?\s*[0-9IVXLCDMivxlcdm]+.*"""),
+        Regex("""(?i)^\s*Thứ\s+[0-9IVXLCDMivxlcdm]+\s+Chương.*""")
     )
 
     override suspend fun getChapterList(context: Context, uri: Uri): List<BookChapter> = withContext(Dispatchers.IO) {
         val chapters = mutableListOf<BookChapter>()
 
-        try {
-            val fullText = readFullText(context, uri)
-            if (fullText.isBlank()) return@withContext chapters
+        context.contentResolver.openInputStream(uri)?.use { inputStream ->
+            val reader = BufferedReader(InputStreamReader(inputStream, StandardCharsets.UTF_8))
+            var line: String?
+            var currentCharOffset = 0
+            var currentChapterTitle = "Mở đầu"
+            var startCharOffset = 0
 
-            val matcher = chapterPattern.matcher(fullText)
-            var chapterIndex = 0
-            var lastStartOffset = 0
-            var lastTitle = "Phần mở đầu"
+            while (reader.readLine().also { line = it } != null) {
+                val currentLine = line ?: ""
+                val lineLengthWithNewline = currentLine.length + 1
 
-            while (matcher.find()) {
-                val matchStart = matcher.start()
-
-                if (matchStart > lastStartOffset) {
-                    chapters.add(
-                        BookChapter(
-                            index = chapterIndex++,
-                            title = lastTitle,
-                            path = "",
-                            path_next = "",
-                            startCharOffset = lastStartOffset,
-                            endCharOffset = matchStart
+                if (isChapterHeader(currentLine)) {
+                    if (currentCharOffset > startCharOffset) {
+                        chapters.add(
+                            BookChapter(
+                                index = chapters.size,
+                                title = currentChapterTitle,
+                                startCharOffset = startCharOffset,
+                                endCharOffset = currentCharOffset
+                            )
                         )
-                    )
+                    }
+                    currentChapterTitle = currentLine.trim()
+                    startCharOffset = currentCharOffset
                 }
 
-                lastTitle = matcher.group().trim()
-                lastStartOffset = matchStart
+                currentCharOffset += lineLengthWithNewline
             }
 
-            if (lastStartOffset < fullText.length) {
+            // Thêm chương cuối cùng
+            if (currentCharOffset > startCharOffset) {
                 chapters.add(
                     BookChapter(
-                        index = chapterIndex,
-                        title = lastTitle,
-                        path = "",
-                        path_next = "",
-                        startCharOffset = lastStartOffset,
-                        endCharOffset = fullText.length
+                        index = chapters.size,
+                        title = currentChapterTitle,
+                        startCharOffset = startCharOffset,
+                        endCharOffset = currentCharOffset
                     )
                 )
             }
-        } catch (e: Exception) {
-            e.printStackTrace()
+        }
+
+        if (chapters.isEmpty()) {
+            return@withContext fallbackChunking(context, uri)
         }
 
         return@withContext chapters
     }
 
-    override suspend fun getChapterContent(context: Context, uri: Uri, chapter: BookChapter): String = withContext(Dispatchers.IO) {
-        try {
-            val fullText = readFullText(context, uri)
-            if (fullText.isBlank()) return@withContext "Không thể đọc dữ liệu tệp văn bản."
+    override suspend fun getChapterContent(
+        context: Context,
+        uri: Uri,
+        chapter: BookChapter
+    ): String = withContext(Dispatchers.IO) {
+        val contentBuilder = StringBuilder()
 
-            val start = chapter.startCharOffset.coerceIn(0, fullText.length)
-            val end = if (chapter.endCharOffset in (start + 1)..fullText.length) {
-                chapter.endCharOffset
-            } else {
-                fullText.length
+        context.contentResolver.openInputStream(uri)?.use { inputStream ->
+            val reader = BufferedReader(InputStreamReader(inputStream, StandardCharsets.UTF_8))
+            var currentCharOffset = 0
+            var line: String?
+
+            while (reader.readLine().also { line = it } != null) {
+                val currentLine = line ?: ""
+                val lineLengthWithNewline = currentLine.length + 1
+                val lineEndOffset = currentCharOffset + lineLengthWithNewline
+
+                if (lineEndOffset > chapter.startCharOffset && (chapter.endCharOffset == -1 || currentCharOffset < chapter.endCharOffset)) {
+                    contentBuilder.append(currentLine).append("\n")
+                } else if (chapter.endCharOffset != -1 && currentCharOffset >= chapter.endCharOffset) {
+                    break
+                }
+
+                currentCharOffset += lineLengthWithNewline
             }
-
-            return@withContext fullText.substring(start, end).trim()
-        } catch (e: Exception) {
-            e.printStackTrace()
-            return@withContext "Không thể tải nội dung chương này."
         }
+
+        return@withContext contentBuilder.toString().trim()
     }
 
-    private fun readFullText(context: Context, uri: Uri): String {
-        val charset = detectCharset(context, uri)
-        val inputStream = context.contentResolver.openInputStream(uri) ?: return ""
-        val reader = BufferedReader(InputStreamReader(inputStream, charset))
-        return reader.use { it.readText() }
+    override fun clearCache(context: Context, uri: Uri) {}
+
+    private fun isChapterHeader(line: String): Boolean {
+        val cleanLine = line.replace("\uFEFF", "").trim()
+        if (cleanLine.isEmpty() || cleanLine.length > 100) return false
+        return chapterPatterns.any { it.matches(cleanLine) }
     }
 
-    private fun detectCharset(context: Context, uri: Uri): Charset {
-        return try {
-            val inputStream = context.contentResolver.openInputStream(uri) ?: return StandardCharsets.UTF_8
-            val buffer = ByteArray(4096)
-            val read = inputStream.read(buffer)
-            inputStream.close()
+    private fun fallbackChunking(context: Context, uri: Uri): List<BookChapter> {
+        val chapters = mutableListOf<BookChapter>()
+        val targetCharsPerChapter = 15000
 
-            if (read >= 2) {
-                if (buffer[0] == 0xFF.toByte() && buffer[1] == 0xFE.toByte()) return Charset.forName("UTF-16LE")
-                if (buffer[0] == 0xFE.toByte() && buffer[1] == 0xFF.toByte()) return Charset.forName("UTF-16BE")
+        context.contentResolver.openInputStream(uri)?.use { inputStream ->
+            val reader = BufferedReader(InputStreamReader(inputStream, StandardCharsets.UTF_8))
+            var line: String?
+            var currentCharOffset = 0
+            var chapterStartOffset = 0
+            var currentChapterCharCount = 0
+
+            while (reader.readLine().also { line = it } != null) {
+                val currentLine = line ?: ""
+                val lineLengthWithNewline = currentLine.length + 1
+
+                currentCharOffset += lineLengthWithNewline
+                currentChapterCharCount += lineLengthWithNewline
+
+                if (currentChapterCharCount >= targetCharsPerChapter) {
+                    chapters.add(
+                        BookChapter(
+                            index = chapters.size,
+                            title = "Phần ${chapters.size + 1}",
+                            startCharOffset = chapterStartOffset,
+                            endCharOffset = currentCharOffset
+                        )
+                    )
+                    chapterStartOffset = currentCharOffset
+                    currentChapterCharCount = 0
+                }
             }
-            StandardCharsets.UTF_8
-        } catch (e: Exception) {
-            StandardCharsets.UTF_8
+
+            if (currentCharOffset > chapterStartOffset) {
+                chapters.add(
+                    BookChapter(
+                        index = chapters.size,
+                        title = "Phần ${chapters.size + 1}",
+                        startCharOffset = chapterStartOffset,
+                        endCharOffset = currentCharOffset
+                    )
+                )
+            }
         }
+
+        return chapters
     }
 }

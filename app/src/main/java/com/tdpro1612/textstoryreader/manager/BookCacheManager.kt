@@ -2,7 +2,6 @@ package com.tdpro1612.textstoryreader.manager
 
 import android.content.Context
 import com.tdpro1612.textstoryreader.reader.epub.EpubUnzipper
-import com.tdpro1612.textstoryreader.reader.txt.TxtExtractor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -62,6 +61,5 @@ object BookCacheManager {
 
     fun clearAllBookCaches(context: Context) {
         EpubUnzipper.clearAllEpubCache(context)
-        TxtExtractor.clearAllTxtCache(context)
     }
 }
