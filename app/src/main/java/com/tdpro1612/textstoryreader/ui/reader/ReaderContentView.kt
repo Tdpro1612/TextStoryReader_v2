@@ -1,14 +1,7 @@
 package com.tdpro1612.textstoryreader.ui.reader
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
@@ -16,10 +9,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -36,18 +26,21 @@ import com.tdpro1612.textstoryreader.reader.BookChapter
 import com.tdpro1612.textstoryreader.settings.ReadMode
 import com.tdpro1612.textstoryreader.settings.ReaderSettings
 import com.tdpro1612.textstoryreader.settings.toComposeFontFamily
+import kotlin.math.roundToInt
 
 @Composable
 fun ReaderContentView(
     content: String,
     currentChapter: BookChapter,
-    readProgress: Float, // 👈 Cập nhật dùng tiến độ % (0.0f -> 1.0f)
+    totalChapters: Int,
+    currentChapterIndex: Int,
+    readProgress: Float, // Tiến độ % toàn bộ cuốn sách (0.0f -> 100.0f)
     hasPreviousChapter: Boolean,
     hasNextChapter: Boolean,
     settings: ReaderSettings,
     onNextChapter: () -> Unit,
     onPreviousChapter: () -> Unit,
-    onProgressChanged: (Float) -> Unit, // 👈 Callback gửi % tiến độ mới về
+    onProgressChanged: (Float) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val bgColor = Color(settings.themePreset.backgroundColorHex)
@@ -59,6 +52,13 @@ fun ReaderContentView(
         color = textColor
     )
 
+    // 🔥 Tự động quy đổi readProgress tổng (0..100%) về % nội bộ chương (0.0f -> 1.0f)
+    val intraProgress = remember(readProgress, currentChapterIndex, totalChapters) {
+        if (totalChapters > 0) {
+            ((readProgress / 100f * totalChapters) - currentChapterIndex).coerceIn(0f, 1f)
+        } else 0f
+    }
+
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -69,7 +69,7 @@ fun ReaderContentView(
                 ScrollReaderView(
                     content = content,
                     chapterTitle = currentChapter.title,
-                    readProgress = readProgress,
+                    intraProgress = intraProgress,
                     textStyle = textStyle,
                     hasPreviousChapter = hasPreviousChapter,
                     hasNextChapter = hasNextChapter,
@@ -82,7 +82,7 @@ fun ReaderContentView(
                 PageFlipReaderView(
                     chapterTitle = currentChapter.title,
                     content = content,
-                    readProgress = readProgress,
+                    intraProgress = intraProgress,
                     textStyle = textStyle,
                     hasPreviousChapter = hasPreviousChapter,
                     hasNextChapter = hasNextChapter,
@@ -99,7 +99,7 @@ fun ReaderContentView(
 private fun ScrollReaderView(
     content: String,
     chapterTitle: String,
-    readProgress: Float,
+    intraProgress: Float,
     textStyle: TextStyle,
     hasPreviousChapter: Boolean,
     hasNextChapter: Boolean,
@@ -108,12 +108,14 @@ private fun ScrollReaderView(
     onProgressChanged: (Float) -> Unit
 ) {
     val scrollState = rememberScrollState()
+    var isRestored by remember(chapterTitle) { mutableStateOf(false) }
 
-    // Quy đổi % tiến độ sang giá trị Pixel cuộn khi layout render xong
-    LaunchedEffect(scrollState.maxValue, chapterTitle) {
-        if (scrollState.maxValue > 0) {
-            val targetPixel = (scrollState.maxValue * readProgress).toInt()
-            scrollState.scrollTo(targetPixel)
+    // 🔥 Khôi phục vị trí cuộn từ intraProgress
+    LaunchedEffect(chapterTitle, scrollState.maxValue) {
+        if (scrollState.maxValue > 0 && !isRestored) {
+            val targetPx = (scrollState.maxValue * intraProgress).toInt()
+            scrollState.scrollTo(targetPx)
+            isRestored = true
         }
     }
 
@@ -121,7 +123,7 @@ private fun ScrollReaderView(
     LaunchedEffect(scrollState) {
         snapshotFlow { scrollState.value }
             .collect { currentPx ->
-                if (scrollState.maxValue > 0) {
+                if (scrollState.maxValue > 0 && isRestored) {
                     val progress = currentPx.toFloat() / scrollState.maxValue.toFloat()
                     onProgressChanged(progress.coerceIn(0f, 1f))
                 }
@@ -183,7 +185,7 @@ private fun ScrollReaderView(
 private fun PageFlipReaderView(
     chapterTitle: String,
     content: String,
-    readProgress: Float,
+    intraProgress: Float,
     textStyle: TextStyle,
     hasPreviousChapter: Boolean,
     hasNextChapter: Boolean,
@@ -216,22 +218,17 @@ private fun PageFlipReaderView(
         val offset = if (hasPreviousChapter) 1 else 0
         val totalPages = totalContentPages + offset + (if (hasNextChapter) 1 else 0)
 
-        // Quy đổi từ % tiến độ sang chỉ số trang tương ứng
-        val initialPage = remember(readProgress, totalContentPages) {
-            if (totalContentPages > 0) {
-                val calculatedContentIndex = ((totalContentPages - 1) * readProgress).toInt()
-                (calculatedContentIndex + offset).coerceIn(0, (totalPages - 1).coerceAtLeast(0))
-            } else 0
-        }
+        // 🔥 Khôi phục trang ban đầu từ intraProgress
+        val initialContentPage = if (totalContentPages > 1) {
+            (intraProgress * (totalContentPages - 1)).roundToInt()
+        } else 0
 
-        val pagerState = rememberPagerState(initialPage = initialPage, pageCount = { totalPages })
+        val pagerState = rememberPagerState(
+            initialPage = (initialContentPage + offset).coerceIn(0, totalPages - 1),
+            pageCount = { totalPages }
+        )
 
-        // Nhảy đến trang tương ứng nếu đổi chapter
-        LaunchedEffect(chapterTitle) {
-            pagerState.scrollToPage(initialPage)
-        }
-
-        // Lắng nghe chuyển trang để tính % tiến độ mới gửi về ViewModel
+        // Lắng nghe chuyển trang để tính % tiến độ mới
         LaunchedEffect(pagerState) {
             snapshotFlow { pagerState.currentPage }
                 .collect { page ->
@@ -313,9 +310,6 @@ private fun PageFlipReaderView(
     }
 }
 
-/**
- * Hàm phân trang tính toán chính xác tuyệt đối, bổ sung In Đậm Title ở Trang 1
- */
 private fun paginateText(
     chapterTitle: String,
     content: String,
@@ -374,7 +368,6 @@ private fun paginateText(
         }
 
         val visibleEndOffset = result.getLineEnd(lineIndex)
-
         val titleLengthOffset = if (isFirstPage && chapterTitle.isNotBlank()) chapterTitle.length + 2 else 0
         val actualEndOffset = (visibleEndOffset - titleLengthOffset).coerceIn(0, remainingText.length)
 

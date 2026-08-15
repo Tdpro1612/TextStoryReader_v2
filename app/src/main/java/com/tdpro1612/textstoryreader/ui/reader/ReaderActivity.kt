@@ -85,10 +85,8 @@ fun ReaderScreen(
 
     var showSettingsSheet by remember { mutableStateOf(false) }
 
-    // 🔥 Gọi hàm xử lý màu Theme trực tiếp từ SettingsViewModel
     val (backgroundColor, textColor) = settingsViewModel.getThemeColors(readerSettings.themePreset)
 
-    // 🔥 Xử lý Luôn bật màn hình (keepScreenOn)
     DisposableEffect(readerSettings.keepScreenOn) {
         val activity = context as? Activity
         if (readerSettings.keepScreenOn) {
@@ -293,10 +291,12 @@ fun ReaderScreen(
                         }
                     }
                     is ReaderUiState.Success -> {
-                        // ⚡ Gọi ReaderContentView với tiến độ readProgress đồng bộ chuẩn
+                        // 🔥 Truyền bổ sung totalChapters và currentChapterIndex
                         ReaderContentView(
                             content = state.currentChapterContent.ifBlank { "Đang tải nội dung..." },
                             currentChapter = state.chapters[state.currentChapterIndex],
+                            totalChapters = state.chapters.size,
+                            currentChapterIndex = state.currentChapterIndex,
                             readProgress = state.readProgress,
                             hasPreviousChapter = state.currentChapterIndex > 0,
                             hasNextChapter = state.currentChapterIndex < state.chapters.size - 1,
