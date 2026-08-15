@@ -116,4 +116,30 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
             )
         }
     }
+
+    // Thêm vào trong class LibraryViewModel
+    // Cập nhật hàm deleteBook trong LibraryViewModel.kt
+    fun deleteBook(book: BookEntity, deletePhysicalFile: Boolean = true) {
+        viewModelScope.launch(Dispatchers.IO) {
+            // Gọi hàm xóa file gốc + dữ liệu DB
+            bookManager.deleteBook(book, deletePhysicalFile = deletePhysicalFile)
+
+            // Tự động kiểm tra và lùi trang nếu trang hiện tại rỗng
+            val currentCount = _totalBooksCount.value - 1
+            val maxPages = if (currentCount <= 0) 1 else kotlin.math.ceil(currentCount.toDouble() / pageSize).toInt()
+
+            if (_currentPage.value > maxPages) {
+                _currentPage.value = maxPages
+            }
+
+            loadBooks(_searchQuery.value, _currentPage.value)
+        }
+    }
+
+    // 🔥 BỔ SUNG: Chỉ xóa khỏi Lịch sử đọc (đặt thời gian đọc & tiến độ về 0)
+    fun removeFromHistory(book: BookEntity) {
+        viewModelScope.launch(Dispatchers.IO) {
+            bookManager.clearHistoryForBook(book.id)
+        }
+    }
 }

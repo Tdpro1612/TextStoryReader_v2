@@ -14,13 +14,14 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBackIosNew
-import androidx.compose.material.icons.filled.ArrowForwardIos
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForwardIos
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -52,15 +53,6 @@ class LibraryActivity : ComponentActivity() {
             }
         }
     }
-
-    @Deprecated("Deprecated in Java")
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        try {
-            super.onActivityResult(requestCode, resultCode, data)
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -79,15 +71,18 @@ fun LibraryScreen(
     val totalPages by viewModel.totalPages.collectAsState()
     val totalBooksCount by viewModel.totalBooksCount.collectAsState()
 
-    // 🔥 Lịch sử đọc từ ViewModel
+    // Lịch sử đọc từ ViewModel
     val recentHistoryBooks by viewModel.recentHistoryBooks.collectAsState()
 
-    // 🔥 Trạng thái đóng/mở BottomSheet Lịch sử
+    // Trạng thái đóng/mở BottomSheet Lịch sử
     var showHistorySheet by remember { mutableStateOf(false) }
     val sheetState = rememberModalBottomSheetState()
 
     var lastSelectedUri by remember { mutableStateOf<String?>(null) }
     var showClearConfirmDialog by remember { mutableStateOf(false) }
+
+    // Sách được chọn để xóa
+    var bookToDelete by remember { mutableStateOf<BookEntity?>(null) }
 
     val listState = rememberLazyListState()
 
@@ -102,12 +97,12 @@ fun LibraryScreen(
     ) { uri ->
         uri?.let {
             try {
-                val takeFlags: Int = Intent.FLAG_GRANT_READ_URI_PERMISSION
+                val takeFlags: Int = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
                 context.contentResolver.takePersistableUriPermission(it, takeFlags)
                 lastSelectedUri = it.toString()
                 viewModel.scanFolder(it.toString(), clearOldData = false)
             } catch (e: Exception) {
-                Toast.makeText(context, "Không thể cấp quyền đọc thư mục!", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, "Không thể cấp quyền đọc/ghi thư mục!", Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -126,6 +121,45 @@ fun LibraryScreen(
             }
             else -> {}
         }
+    }
+
+    // 🔥 AlertDialog Xác nhận Xóa sách
+    bookToDelete?.let { book ->
+        AlertDialog(
+            onDismissRequest = { bookToDelete = null },
+            title = { Text("Xóa truyện") },
+            text = { Text("Bạn muốn xóa \"${book.title}\" như thế nào?") },
+            confirmButton = {
+                // Nút 1: Xóa sạch cả file gốc trong máy
+                TextButton(
+                    onClick = {
+                        viewModel.deleteBook(book, deletePhysicalFile = true)
+                        bookToDelete = null
+                        Toast.makeText(context, "Đã gửi lệnh xóa file gốc", Toast.LENGTH_SHORT).show()
+                    },
+                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("Xóa hẳn file gốc")
+                }
+            },
+            dismissButton = {
+                Row {
+                    TextButton(onClick = { bookToDelete = null }) {
+                        Text("Hủy")
+                    }
+                    // Nút 2: Chỉ xóa khỏi App (giữ file gốc)
+                    TextButton(
+                        onClick = {
+                            viewModel.deleteBook(book, deletePhysicalFile = false)
+                            bookToDelete = null
+                            Toast.makeText(context, "Đã xóa khỏi ứng dụng", Toast.LENGTH_SHORT).show()
+                        }
+                    ) {
+                        Text("Chỉ xóa khỏi ứng dụng")
+                    }
+                }
+            }
+        )
     }
 
     if (showClearConfirmDialog) {
@@ -153,7 +187,7 @@ fun LibraryScreen(
         )
     }
 
-    // 🔥 Modal BottomSheet hiển thị lịch sử đọc
+    // 🔥 Modal BottomSheet hiển thị Lịch sử đọc
     if (showHistorySheet) {
         ModalBottomSheet(
             onDismissRequest = { showHistorySheet = false },
@@ -193,11 +227,16 @@ fun LibraryScreen(
                             items = recentHistoryBooks,
                             key = { book -> book.id }
                         ) { book ->
+                            // Xóa trong Lịch sử -> gọi removeFromHistory
                             BookItem(
                                 book = book,
                                 onClick = {
                                     showHistorySheet = false
                                     onBookClick(book)
+                                },
+                                onDeleteClick = {
+                                    viewModel.removeFromHistory(book)
+                                    Toast.makeText(context, "Đã xóa khỏi lịch sử đọc", Toast.LENGTH_SHORT).show()
                                 }
                             )
                         }
@@ -213,7 +252,6 @@ fun LibraryScreen(
             TopAppBar(
                 title = { Text("Thư Viện ($totalBooksCount truyện)") },
                 actions = {
-                    // 🔥 Nút mở lịch sử đọc
                     IconButton(onClick = { showHistorySheet = true }) {
                         Icon(Icons.Default.History, contentDescription = "Lịch sử đọc")
                     }
@@ -225,9 +263,6 @@ fun LibraryScreen(
                             Icon(Icons.Default.Refresh, contentDescription = "Xóa & Quét lại")
                         }
                     }
-//                    IconButton(onClick = { /* Mở Settings */ }) {
-//                        Icon(Icons.Default.Settings, contentDescription = "Cài đặt")
-//                    }
                 }
             )
         },
@@ -248,7 +283,7 @@ fun LibraryScreen(
                             onClick = { viewModel.previousPage() },
                             enabled = currentPage > 1
                         ) {
-                            Icon(Icons.Default.ArrowBackIosNew, contentDescription = "Trang trước")
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Trang trước")
                         }
 
                         Text(
@@ -260,7 +295,7 @@ fun LibraryScreen(
                             onClick = { viewModel.nextPage() },
                             enabled = currentPage < totalPages
                         ) {
-                            Icon(Icons.Default.ArrowForwardIos, contentDescription = "Trang sau")
+                            Icon(Icons.AutoMirrored.Filled.ArrowForwardIos, contentDescription = "Trang sau")
                         }
                     }
                 }
@@ -322,9 +357,11 @@ fun LibraryScreen(
                         items = bookList,
                         key = { book -> book.id }
                     ) { book ->
+                        // 🔥 Đã nối chính xác onDeleteClick -> gán bookToDelete để mở AlertDialog
                         BookItem(
                             book = book,
-                            onClick = { onBookClick(book) }
+                            onClick = { onBookClick(book) },
+                            onDeleteClick = { bookToDelete = book }
                         )
                     }
                 }
@@ -336,8 +373,11 @@ fun LibraryScreen(
 @Composable
 fun BookItem(
     book: BookEntity,
-    onClick: () -> Unit = {}
+    onClick: () -> Unit = {},
+    onDeleteClick: () -> Unit = {}
 ) {
+    var showMenu by remember { mutableStateOf(false) }
+
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -365,6 +405,35 @@ fun BookItem(
                 text = "${book.readProgress.toInt()}%",
                 style = MaterialTheme.typography.labelMedium
             )
+            // Menu 3 chấm
+            Box {
+                IconButton(onClick = { showMenu = true }) {
+                    Icon(
+                        imageVector = Icons.Default.MoreVert,
+                        contentDescription = "Tùy chọn"
+                    )
+                }
+
+                DropdownMenu(
+                    expanded = showMenu,
+                    onDismissRequest = { showMenu = false }
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("Xóa khỏi thư viện", color = MaterialTheme.colorScheme.error) },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Default.Delete,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.error
+                            )
+                        },
+                        onClick = {
+                            showMenu = false
+                            onDeleteClick() // Gọi callback bắn ra ngoài
+                        }
+                    )
+                }
+            }
         }
     }
 }
