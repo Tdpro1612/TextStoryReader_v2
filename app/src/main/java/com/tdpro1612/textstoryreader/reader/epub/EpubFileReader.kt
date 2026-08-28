@@ -135,26 +135,6 @@ class EpubFileReader(
         }
         Log.d(TAG, "🔢 Sau parse + lọc junk: ${chapters.size} chương")
 
-        val startIndex = chapters.indexOfFirst { chapter ->
-            val titleLower = chapter.title.lowercase().trim()
-            titleLower.contains("chương 1:") ||
-                    titleLower.contains("chương 1.") ||
-                    titleLower.contains("chapter 1:") ||
-                    titleLower.contains("chương 01:") ||
-                    titleLower.contains("chương 001:") ||
-                    titleLower == "chương 1" ||
-                    titleLower == "1" ||
-                    titleLower.contains("mở đầu") ||
-                    titleLower.contains("giới thiệu")
-        }
-        Log.d(TAG, "🎯 startIndex tìm thấy = $startIndex" + if (startIndex != -1) " (title: \"${chapters[startIndex].title}\")" else "")
-
-        chapters = if (startIndex != -1) {
-            chapters.subList(startIndex, chapters.size).toMutableList()
-        } else {
-            chapters
-        }
-        Log.d(TAG, "🔢 Sau cắt startIndex: ${chapters.size} chương")
 
         if (chapters.size >= 2) {
             val firstTitle = chapters[0].title.lowercase().trim()
