@@ -117,7 +117,7 @@ object EpubUnzipper {
     }
 
     /**
-     * Dọn dẹp dĩ án, xóa thư mục Cache tạm của một cuốn sách khi đóng ứng dụng / thoát màn hình đọc.
+     * Dọn dẹp dự án, xóa thư mục Cache tạm của một cuốn sách khi đóng ứng dụng / thoát màn hình đọc.
      */
     fun clearCache(cacheFolder: File?) {
         try {
