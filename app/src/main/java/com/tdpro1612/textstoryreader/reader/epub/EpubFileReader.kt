@@ -21,7 +21,7 @@ class EpubFileReader(
     private val TAG = "EpubFileReaderPerformance"
 
     private val strictChapterPattern = Regex(
-        """(?i)^\s*(?:Chương|Chapter|Quyển|Vol|Tiết|Ngoại truyện|Lời bạt|Mở đầu)\s*(\d+|[0-9IVXLCDM]+)?\b|^\s*Hồi\s*(\d+|[0-9IVXLCDM]+|:|\-)\b""",
+        """(?i)^\s*(?:Chương|Chapter|Quyển|Vol|Tiết|Ngoại truyện|Lời bạt|Mở đầu|Hồi)\s+(?:\d[\s\d]*\d|\d+|[0-9IVXLCDM]+|:|-)\b|^\s*Đệ\s+(?:\d[\s\d]*\d|\d+|[0-9IVXLCDM]+)(?:\s+(?:chương|hồi|tiết|phần|bức|thanh)\b|\s*$)|^\s*Đệ\s+(?:nhất|nhị|tam|tứ|ngũ|lục|thất|bát|cửu|thập)\b""",
         RegexOption.IGNORE_CASE
     )
 
@@ -182,16 +182,22 @@ class EpubFileReader(
         // vẫn true (vì các file khác vẫn khớp được). Giờ: chỉ chấp nhận Fast-Path nếu TẤT CẢ
         // file đều khớp được title - hễ thiếu dù chỉ 1 file, huỷ Fast-Path và rơi xuống
         // Deep-Scan (nơi luôn có fallback extractFirstLineTitle, không bao giờ mất file).
+        val HEAVY_FILE_THRESHOLD = 50 * 1024L // Ngưỡng dung lượng file HTML được coi là "nặng" / nghi vấn dồn cục (Ví dụ: 50 KB)
         if (htmlCount > 0 && tocCount > 0 && diff <= 10) {
             val tocMapByFile = tocList.toMap()
             val fastChapters = mutableListOf<BookChapter>()
             var missingTitleCount = 0
+            var hasHeavyFiles = false
 
-            for (relativePath in htmlPathsInSpine) {
+            for ((i, relativePath) in htmlPathsInSpine.withIndex()) {
+                val file = File(cacheFolder, relativePath)
+                val isHeavyFile = file.exists() && file.length() > HEAVY_FILE_THRESHOLD
+
                 val cleanFileName = relativePath.substringAfterLast("/")
                 val title = tocMapByFile[cleanFileName] ?: tocMapByFile[relativePath]
 
-                if (!title.isNullOrBlank()) {
+                if (!title.isNullOrBlank() && !isHeavyFile) {
+                    // File nhẹ và khớp TOC -> Giữ nguyên Fast-path (1 file = 1 chương)
                     fastChapters.add(
                         BookChapter(
                             index = fastChapters.size,
@@ -203,30 +209,25 @@ class EpubFileReader(
                         )
                     )
                 } else {
-                    missingTitleCount++
+                    // File bị nặng hoặc mất title -> Đánh dấu để chuyển sang xử lý bóc tách chi tiết
+                    if (isHeavyFile) hasHeavyFiles = true
+                    if (title.isNullOrBlank()) missingTitleCount++
                 }
             }
 
-            if (missingTitleCount == 0 && fastChapters.isNotEmpty()) {
+            if (missingTitleCount == 0 && !hasHeavyFiles && fastChapters.isNotEmpty()) {
                 Log.i(
                     TAG,
-                    "🚀 [FAST-PATH ACTIVE] $htmlCount file HTML khớp đủ $tocCount title TOC, " +
-                            "không thiếu file nào. Lấy trực tiếp từ TOC!"
+                    "🚀 [FAST-PATH ACTIVE] $htmlCount file HTML chuẩn, không có file nặng. Lấy trực tiếp từ TOC!"
                 )
                 return fastChapters
-            } else if (missingTitleCount > 0) {
+            } else {
                 Log.w(
                     TAG,
-                    "⚠️ [FAST-PATH HUỶ] Phát hiện $missingTitleCount/$htmlCount file không khớp " +
-                            "title TOC -> chuyển Deep-Scan để không mất chương."
+                    "⚠️ [FAST-PATH BỊ NHÚNG] Phát hiện file nặng (dồn cục) hoặc thiếu title TOC -> Chạy Hybrid Scan."
                 )
             }
         }
-        Log.d(
-            TAG,
-            "🐢 [DEEP-SCAN ACTIVE] Số HTML ($htmlCount) và số TOC ($tocCount) lệch lớn hoặc " +
-                    "Fast-Path vừa bị huỷ. Chuyển sang Deep-Scan!"
-        )
         // ================== HẾT FAST-PATH ==================
 
         val tocFileMap = mutableMapOf<String, String>()
